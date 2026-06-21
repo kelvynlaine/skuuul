@@ -8,7 +8,7 @@ import {
   Video, VideoOff, Mic, MicOff, Monitor, PhoneOff, 
   MessageSquare, Send, Volume2, PhoneCall, Phone, Heart, FileText,
   Radio, Tv, X, Crown, BadgeCheck, UserCircle2, Camera,
-  CameraOff, MonitorStop, Users, RefreshCw, Wifi, WifiOff
+  CameraOff, MonitorStop, Users, RefreshCw, Wifi, WifiOff, Maximize2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -64,6 +64,7 @@ export const LiveRooms: React.FC = () => {
   const [audioLevel, setAudioLevel] = useState(20);
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [showSidePanel, setShowSidePanel] = useState(false);
+  const [expandedVideo, setExpandedVideo] = useState<'remote' | 'local' | null>(null);
   const ringIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Call WebRTC refs
@@ -74,6 +75,7 @@ export const LiveRooms: React.FC = () => {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const expandedVideoRef = useRef<HTMLVideoElement | null>(null);
   const lobbyVideoRef = useRef<HTMLVideoElement | null>(null);
   const lobbyStreamRef = useRef<MediaStream | null>(null);
   const callChatChannelRef = useRef<any>(null);
@@ -586,6 +588,25 @@ export const LiveRooms: React.FC = () => {
     }
   }, [callJoined, attachRemoteStream]);
 
+  // Mirror the selected tile's stream into the expanded (spotlight) video.
+  // The original tile stays mounted, so we mute the expanded copy to avoid
+  // double audio; the remote tile keeps playing the sound.
+  useEffect(() => {
+    if (!expandedVideo) return;
+    const src = expandedVideo === 'remote' ? remoteVideoRef.current : localVideoRef.current;
+    const dest = expandedVideoRef.current;
+    if (src?.srcObject && dest) {
+      dest.srcObject = src.srcObject;
+      dest.muted = true;
+      dest.play().catch(() => {});
+    }
+  }, [expandedVideo, isScreenSharing, myCam, callJoined]);
+
+  // Close the spotlight automatically if the call ends.
+  useEffect(() => {
+    if (!callJoined) setExpandedVideo(null);
+  }, [callJoined]);
+
   // ─── IN-CALL CHAT (DB-backed, realtime postgres_changes per call) ─────────
   // Messages live in public.call_messages. Both participants load the history
   // and subscribe to INSERTs filtered by call_id, so the same proven realtime
@@ -850,6 +871,30 @@ export const LiveRooms: React.FC = () => {
           onCallWebRTC={(u) => { setSelectedProfile(null); handleDialUser(u); }} />
       )}
 
+      {/* Expanded video spotlight — full window, works on desktop & mobile.
+          object-contain so a shared screen is shown in its entirety. */}
+      {callJoined && expandedVideo && (
+        <div className="fixed inset-0 z-[60] bg-black/95 backdrop-blur-sm flex items-center justify-center"
+          onClick={() => setExpandedVideo(null)}>
+          <video ref={expandedVideoRef} autoPlay playsInline muted
+            className="max-w-full max-h-full w-full h-full object-contain" />
+          <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
+            <span className="bg-black/60 text-white text-xs px-3 py-1.5 rounded-full font-bold backdrop-blur flex items-center gap-2">
+              {expandedVideo === 'remote'
+                ? <><Video className="w-3.5 h-3.5" /> {selectedCallUser?.full_name || selectedCallUser?.username}</>
+                : <>{isScreenSharing ? <Monitor className="w-3.5 h-3.5" /> : <Video className="w-3.5 h-3.5" />} Moi {isScreenSharing && '(Écran)'}</>}
+            </span>
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); setExpandedVideo(null); }}
+            title="Réduire" className="absolute top-4 right-4 z-10 p-3 rounded-full bg-white/10 text-white hover:bg-white/20 transition backdrop-blur">
+            <X className="w-6 h-6" />
+          </button>
+          <span className="absolute bottom-5 left-1/2 -translate-x-1/2 z-10 text-white/40 text-[11px] font-medium pointer-events-none">
+            Touchez ou cliquez pour réduire
+          </span>
+        </div>
+      )}
+
       {/* Donation Alert */}
       {activeAlert && (
         <div className="fixed top-24 left-1/2 -translate-x-1/2 z-50 w-full max-w-md px-4 pointer-events-none">
@@ -1027,25 +1072,31 @@ export const LiveRooms: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-neutral-950 p-3 rounded-2xl min-h-[280px]">
-                  <div className="relative rounded-xl overflow-hidden bg-neutral-900 border border-white/5 min-h-[160px]">
+                  <div onClick={() => setExpandedVideo('remote')}
+                    className="group relative rounded-xl overflow-hidden bg-neutral-900 border border-white/5 min-h-[160px] cursor-pointer">
                     {/* Remote video + audio — NOT muted so the other person is heard */}
                     <video ref={remoteVideoRef} autoPlay playsInline className="absolute inset-0 w-full h-full object-cover" />
                     <div className="absolute rounded-full border-4 border-emerald-400/30 transition-all duration-150 pointer-events-none left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
                       style={{ width: `${100 + audioLevel}px`, height: `${100 + audioLevel}px`, opacity: audioLevel > 30 ? 0.5 : 0 }} />
+                    <button onClick={(e) => { e.stopPropagation(); setExpandedVideo('remote'); }}
+                      title="Agrandir" className="absolute top-3 right-3 z-20 p-2 rounded-lg bg-black/55 text-white backdrop-blur hover:bg-black/75 transition opacity-100 md:opacity-0 md:group-hover:opacity-100">
+                      <Maximize2 className="w-4 h-4" />
+                    </button>
                     <div className="absolute bottom-3 left-3 bg-black/60 text-white text-[10px] px-2.5 py-1 rounded-full font-semibold z-20 backdrop-blur flex items-center gap-1.5">
                       {audioLevel > 35 && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />}
                       {selectedCallUser.full_name || selectedCallUser.username}
                     </div>
                     {/* Audio autoplay fallback — browsers may block sound until a tap */}
                     {audioBlocked && (
-                      <button onClick={handleUnlockAudio}
+                      <button onClick={(e) => { e.stopPropagation(); handleUnlockAudio(); }}
                         className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-black/70 text-white backdrop-blur-sm">
                         <Volume2 className="w-8 h-8 animate-pulse" />
                         <span className="text-xs font-bold">Toucher pour activer le son</span>
                       </button>
                     )}
                   </div>
-                  <div className="relative rounded-xl overflow-hidden bg-neutral-900 border border-white/5 flex items-center justify-center min-h-[160px]">
+                  <div onClick={() => setExpandedVideo('local')}
+                    className="group relative rounded-xl overflow-hidden bg-neutral-900 border border-white/5 flex items-center justify-center min-h-[160px] cursor-pointer">
                     <video ref={localVideoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover ${(!myCam && !isScreenSharing) ? 'opacity-0' : 'opacity-100'}`} />
                     {!myCam && !isScreenSharing && (
                       <div className="flex flex-col items-center gap-3 relative z-10">
@@ -1053,6 +1104,12 @@ export const LiveRooms: React.FC = () => {
                           : <div className="w-20 h-20 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-2xl">{profile?.username?.[0]?.toUpperCase()}</div>}
                         <span className="text-white/50 text-xs font-bold">Caméra désactivée</span>
                       </div>
+                    )}
+                    {(myCam || isScreenSharing) && (
+                      <button onClick={(e) => { e.stopPropagation(); setExpandedVideo('local'); }}
+                        title="Agrandir" className="absolute top-3 right-3 z-20 p-2 rounded-lg bg-black/55 text-white backdrop-blur hover:bg-black/75 transition opacity-100 md:opacity-0 md:group-hover:opacity-100">
+                        <Maximize2 className="w-4 h-4" />
+                      </button>
                     )}
                     <div className="absolute bottom-3 left-3 bg-black/60 text-white text-[10px] px-2.5 py-1 rounded-full font-semibold z-20 backdrop-blur">
                       Moi {!myMic && '(Muet)'}
