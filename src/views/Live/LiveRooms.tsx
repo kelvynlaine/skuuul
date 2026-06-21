@@ -5,10 +5,10 @@ import { useLiveStore, Livestream } from '../../store/liveStore';
 import { supabase } from '../../services/supabase';
 import { UserProfileModal } from '../../components/UserProfileModal';
 import { 
-  Video, VideoOff, Mic, MicOff, Monitor, PhoneOff, 
+  Video, VideoOff, Mic, MicOff, Monitor, PhoneOff,
   MessageSquare, Send, Volume2, PhoneCall, Phone, Heart, FileText,
   Radio, Tv, X, Crown, BadgeCheck, UserCircle2, Camera,
-  CameraOff, MonitorStop, Users, RefreshCw, Wifi, WifiOff, Maximize2
+  CameraOff, MonitorStop, Users, RefreshCw, Wifi, WifiOff, Maximize2, SwitchCamera
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -61,6 +61,8 @@ export const LiveRooms: React.FC = () => {
   const [selectedCallUser, setSelectedCallUser] = useState<Profile | null>(null);
   const [isDialing, setIsDialing] = useState(false);
   const [lobbyCamera, setLobbyCamera] = useState(false);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [canScreenShare, setCanScreenShare] = useState(false);
   const [audioLevel, setAudioLevel] = useState(20);
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [showSidePanel, setShowSidePanel] = useState(false);
@@ -117,6 +119,7 @@ export const LiveRooms: React.FC = () => {
 
   // ─── LIFECYCLE ────────────────────────────────────────────────────────────
   useEffect(() => {
+    setCanScreenShare(typeof navigator.mediaDevices?.getDisplayMedia === 'function');
     fetchProfilesList();
     fetchActiveStreams();
   }, [fetchProfilesList, fetchActiveStreams]);
@@ -730,6 +733,27 @@ export const LiveRooms: React.FC = () => {
     }
   };
 
+  const handleFlipCamera = async () => {
+    if (!localStreamRef.current || !peerConnectionRef.current) return;
+    const newFacing = facingMode === 'user' ? 'environment' : 'user';
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { exact: newFacing } },
+        audio: false,
+      });
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      const sender = peerConnectionRef.current.getSenders().find(s => s.track?.kind === 'video');
+      if (sender) await sender.replaceTrack(newVideoTrack);
+      localStreamRef.current.getVideoTracks().forEach(t => t.stop());
+      localStreamRef.current.removeTrack(localStreamRef.current.getVideoTracks()[0]);
+      localStreamRef.current.addTrack(newVideoTrack);
+      if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
+      setFacingMode(newFacing);
+    } catch {
+      // Some devices don't have two cameras or don't support exact facing mode
+    }
+  };
+
   // ─── LIVESTREAM HANDLERS ──────────────────────────────────────────────────
   const handleLaunchStream = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1117,11 +1141,21 @@ export const LiveRooms: React.FC = () => {
                   </div>
                 </div>
                 <div className="glass-panel p-3 sm:p-4 rounded-2xl border border-black/5 dark:border-white/5 flex justify-between items-center gap-2">
-                  <button onClick={handleScreenShareToggle}
-                    className={`p-3 rounded-xl transition border text-sm font-bold flex items-center gap-2 shrink-0 ${isScreenSharing ? 'bg-blue-500/15 border-blue-500/25 text-blue-500' : 'bg-black/5 dark:bg-white/5 border-black/5 text-ios-label-secondaryLight hover:bg-black/10'}`}>
-                    {isScreenSharing ? <MonitorStop className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
-                    <span className="hidden sm:inline">{isScreenSharing ? 'Arrêter' : 'Partager'}</span>
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {canScreenShare && (
+                      <button onClick={handleScreenShareToggle}
+                        className={`p-3 rounded-xl transition border text-sm font-bold flex items-center gap-2 ${isScreenSharing ? 'bg-blue-500/15 border-blue-500/25 text-blue-500' : 'bg-black/5 dark:bg-white/5 border-black/5 text-ios-label-secondaryLight hover:bg-black/10'}`}>
+                        {isScreenSharing ? <MonitorStop className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
+                        <span className="hidden sm:inline">{isScreenSharing ? 'Arrêter' : 'Partager'}</span>
+                      </button>
+                    )}
+                    {myCam && !isScreenSharing && (
+                      <button onClick={handleFlipCamera} title="Retourner caméra"
+                        className="p-3 rounded-xl transition border bg-black/5 dark:bg-white/5 border-black/5 text-ios-label-secondaryLight hover:bg-black/10">
+                        <SwitchCamera className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2 sm:gap-3">
                     <button onClick={() => setMyMic(!myMic)} title={myMic ? 'Couper le micro' : 'Activer le micro'} className={`p-3 sm:p-3.5 rounded-full transition border ${myMic ? 'bg-black/5 dark:bg-white/5 border-black/5 hover:bg-black/10' : 'bg-red-500 border-red-500 text-white shadow-lg'}`}>
                       {myMic ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
