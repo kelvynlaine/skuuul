@@ -127,6 +127,47 @@ CREATE POLICY "Anyone involved in the call can delete it"
     ON public.calls FOR DELETE
     USING (auth.uid() = caller_id OR auth.uid() = receiver_id);
 
+-- Shared in-call notepad (synced live between the two participants).
+ALTER TABLE public.calls ADD COLUMN IF NOT EXISTS notes TEXT;
+
+
+-- =====================================================================
+-- 3b. CALL MESSAGES (in-call text chat)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS public.call_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    call_id UUID NOT NULL REFERENCES public.calls(id) ON DELETE CASCADE,
+    sender_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    sender_name TEXT,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_call_messages_call ON public.call_messages(call_id, created_at);
+
+ALTER TABLE public.call_messages ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Call participants can view messages" ON public.call_messages;
+CREATE POLICY "Call participants can view messages"
+    ON public.call_messages FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.calls c
+            WHERE c.id = call_id AND (c.caller_id = auth.uid() OR c.receiver_id = auth.uid())
+        )
+    );
+
+DROP POLICY IF EXISTS "Call participants can send messages" ON public.call_messages;
+CREATE POLICY "Call participants can send messages"
+    ON public.call_messages FOR INSERT
+    WITH CHECK (
+        auth.uid() = sender_id
+        AND EXISTS (
+            SELECT 1 FROM public.calls c
+            WHERE c.id = call_id AND (c.caller_id = auth.uid() OR c.receiver_id = auth.uid())
+        )
+    );
+
 
 -- =====================================================================
 -- 4. ENABLE REALTIME
@@ -143,6 +184,7 @@ END $$;
 ALTER TABLE public.calls REPLICA IDENTITY FULL;
 ALTER TABLE public.donations REPLICA IDENTITY FULL;
 ALTER TABLE public.livestreams REPLICA IDENTITY FULL;
+ALTER TABLE public.call_messages REPLICA IDENTITY FULL;
 
 DO $$
 BEGIN
@@ -165,5 +207,12 @@ BEGIN
         WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'livestreams'
     ) THEN
         ALTER PUBLICATION supabase_realtime ADD TABLE public.livestreams;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'call_messages'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.call_messages;
     END IF;
 END $$;

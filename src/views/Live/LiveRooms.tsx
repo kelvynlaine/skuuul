@@ -14,6 +14,8 @@ import confetti from 'canvas-confetti';
 
 const STUN_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
+const DEFAULT_NOTES = '📝 Notes de réunion...\n\n• Point 1 :\n• Point 2 :\n• Action items :';
+
 const RoleBadge: React.FC<{ role: string; small?: boolean }> = ({ role, small }) => {
   const base = small ? 'text-[9px] px-1.5 py-0.5' : 'text-[10px] px-2.5 py-1';
   if (role === 'admin') return (
@@ -51,7 +53,7 @@ export const LiveRooms: React.FC = () => {
   const [myCam, setMyCam] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [callActiveTab, setCallActiveTab] = useState<'chat' | 'notes'>('chat');
-  const [notesContent, setNotesContent] = useState('📝 Notes de réunion...\n\n• Point 1 :\n• Point 2 :\n• Action items :');
+  const [notesContent, setNotesContent] = useState(DEFAULT_NOTES);
   const [callChatMessages, setCallChatMessages] = useState<{ id: string; sender: string; text: string; isSelf?: boolean }[]>([]);
   const [callChatInput, setCallChatInput] = useState('');
   const [callDuration, setCallDuration] = useState(0);
@@ -75,6 +77,8 @@ export const LiveRooms: React.FC = () => {
   const lobbyVideoRef = useRef<HTMLVideoElement | null>(null);
   const lobbyStreamRef = useRef<MediaStream | null>(null);
   const callChatChannelRef = useRef<any>(null);
+  const notesSyncRef = useRef<string>(DEFAULT_NOTES);
+  const notesDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ─── LIVESTREAM STATE ─────────────────────────────────────────────────────
   const [streamTitle, setStreamTitle] = useState('');
@@ -179,6 +183,12 @@ export const LiveRooms: React.FC = () => {
                   setIsDialing(false);
                 } catch (e) { console.error(e); }
               }
+            }
+            // Shared notes sync: apply remote edits for the active call only,
+            // skipping our own echo (tracked via notesSyncRef).
+            if (call.id === activeCallRef.current?.id && typeof call.notes === 'string' && call.notes !== notesSyncRef.current) {
+              notesSyncRef.current = call.notes;
+              setNotesContent(call.notes);
             }
           }
         })
@@ -520,6 +530,9 @@ export const LiveRooms: React.FC = () => {
     setShowSidePanel(false);
     setCallChatMessages([]);
     setCallChatInput('');
+    if (notesDebounceRef.current) { clearTimeout(notesDebounceRef.current); notesDebounceRef.current = null; }
+    notesSyncRef.current = DEFAULT_NOTES;
+    setNotesContent(DEFAULT_NOTES);
     activeCallRef.current = null;
   }, []);
 
@@ -573,37 +586,60 @@ export const LiveRooms: React.FC = () => {
     }
   }, [callJoined, attachRemoteStream]);
 
-  // ─── IN-CALL CHAT & SHARED NOTES (realtime broadcast per call) ────────────
-  // Both participants join a broadcast channel keyed on the call id so chat
-  // messages and the shared notepad sync live between them.
+  // ─── IN-CALL CHAT (DB-backed, realtime postgres_changes per call) ─────────
+  // Messages live in public.call_messages. Both participants load the history
+  // and subscribe to INSERTs filtered by call_id, so the same proven realtime
+  // path as the call signaling delivers chat reliably between them.
   useEffect(() => {
     if (!callJoined) return;
     const callId = activeCallRef.current?.id;
     if (!callId) return;
 
-    const channel = supabase.channel(`call-rtc-${callId}`, {
-      config: { broadcast: { self: false } },
-    });
+    let cancelled = false;
 
-    channel
-      .on('broadcast', { event: 'chat' }, ({ payload }: any) => {
-        setCallChatMessages(prev => {
-          if (prev.some(m => m.id === payload.id)) return prev;
-          return [...prev, { id: payload.id, sender: payload.sender, text: payload.text, isSelf: false }];
-        });
-      })
-      .on('broadcast', { event: 'notes' }, ({ payload }: any) => {
-        setNotesContent(payload.content ?? '');
-      })
+    const appendRow = (row: any) => {
+      setCallChatMessages(prev => {
+        if (prev.some(m => m.id === row.id)) return prev;
+        return [...prev, {
+          id: row.id,
+          sender: row.sender_name || 'Membre',
+          text: row.content,
+          isSelf: row.sender_id === profile?.id,
+        }];
+      });
+    };
+
+    const loadHistory = async () => {
+      const { data } = await supabase
+        .from('call_messages')
+        .select('*')
+        .eq('call_id', callId)
+        .order('created_at', { ascending: true });
+      if (cancelled || !data) return;
+      setCallChatMessages(data.map((row: any) => ({
+        id: row.id,
+        sender: row.sender_name || 'Membre',
+        text: row.content,
+        isSelf: row.sender_id === profile?.id,
+      })));
+    };
+    loadHistory();
+
+    const channel = supabase
+      .channel(`call-chat-${callId}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'call_messages', filter: `call_id=eq.${callId}` },
+        (payload) => appendRow(payload.new))
       .subscribe();
 
     callChatChannelRef.current = channel;
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
       callChatChannelRef.current = null;
     };
-  }, [callJoined]);
+  }, [callJoined, profile]);
 
   const handleDialUser = async (user: Profile) => {
     if (!profile) return;
@@ -710,20 +746,31 @@ export const LiveRooms: React.FC = () => {
     setLiveChatInput('');
   };
 
-  const handleSendCallMessage = (e: React.FormEvent) => {
+  const handleSendCallMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     const text = callChatInput.trim();
-    if (!text) return;
-    const sender = profile?.full_name || (profile?.username ? `@${profile.username}` : 'Moi');
-    const id = `${profile?.id || 'me'}-${Date.now()}`;
-    setCallChatMessages(prev => [...prev, { id, sender, text, isSelf: true }]);
-    callChatChannelRef.current?.send({ type: 'broadcast', event: 'chat', payload: { id, sender, text } });
+    const callId = activeCallRef.current?.id;
+    if (!text || !callId || !profile) return;
+    const sender = profile.full_name || (profile.username ? `@${profile.username}` : 'Moi');
     setCallChatInput('');
+    // The realtime INSERT subscription renders the message for both sides
+    // (including the sender), so we don't append optimistically here.
+    const { error } = await supabase.from('call_messages').insert({
+      call_id: callId, sender_id: profile.id, sender_name: sender, content: text,
+    });
+    if (error) { console.error('Failed to send call message:', error); setCallChatInput(text); }
   };
 
   const handleNotesChange = (content: string) => {
     setNotesContent(content);
-    callChatChannelRef.current?.send({ type: 'broadcast', event: 'notes', payload: { content } });
+    notesSyncRef.current = content;
+    const callId = activeCallRef.current?.id;
+    if (!callId) return;
+    if (notesDebounceRef.current) clearTimeout(notesDebounceRef.current);
+    notesDebounceRef.current = setTimeout(() => {
+      supabase.from('calls').update({ notes: content }).eq('id', callId)
+        .then(({ error }) => { if (error) console.error('Failed to sync notes:', error); });
+    }, 500);
   };
 
   const handleDonationSubmit = async (e: React.FormEvent) => {
