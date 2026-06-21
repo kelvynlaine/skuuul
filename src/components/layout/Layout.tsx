@@ -467,36 +467,63 @@ export const Layout: React.FC = () => {
           )}
 
           {/* Mobile Profile & Logout */}
-          <div className="border-t border-black/10 dark:border-white/10 pt-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {profile?.avatar_url ? (
-                <img 
-                  src={profile.avatar_url} 
-                  alt={profile.username} 
-                  className="w-10 h-10 rounded-full object-cover border border-ios-blue-light/30"
-                />
-              ) : (
-                <div className="w-10 h-10 rounded-full bg-ios-blue-light/10 dark:bg-ios-blue-dark/20 flex items-center justify-center text-ios-blue-light dark:text-ios-blue-dark font-bold">
-                  {profile?.username?.[0]?.toUpperCase() || <UserIcon className="w-5 h-5" />}
+          <div className="border-t border-black/10 dark:border-white/10 pt-4 flex flex-col gap-3">
+            <div 
+              onClick={() => {
+                setMobileMenuOpen(false);
+                openEditProfile();
+              }}
+              className="flex items-center justify-between p-2 rounded-ios-lg hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.98] transition-all cursor-pointer"
+            >
+              <div className="flex items-center gap-3">
+                {profile?.avatar_url ? (
+                  <img 
+                    src={profile.avatar_url} 
+                    alt={profile.username} 
+                    className="w-10 h-10 rounded-full object-cover border border-ios-blue-light/30"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-ios-blue-light/10 dark:bg-ios-blue-dark/20 flex items-center justify-center text-ios-blue-light dark:text-ios-blue-dark font-bold">
+                    {profile?.username?.[0]?.toUpperCase() || <UserIcon className="w-5 h-5" />}
+                  </div>
+                )}
+                <div className="flex flex-col min-w-0">
+                  <span className="text-sm font-bold flex items-center gap-1.5 truncate">
+                    {profile?.full_name || profile?.username}
+                    <Edit3 className="w-3.5 h-3.5 text-ios-blue-light dark:text-ios-blue-dark inline-block shrink-0" />
+                  </span>
+                  <span className="text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark font-medium">
+                    {profile?.role === 'admin' ? 'Administrateur' : profile?.role === 'creator' ? 'Créateur' : 'Membre'}
+                  </span>
+                  {profile?.phone && (
+                    <span className="text-[10px] text-emerald-500 font-semibold flex items-center gap-1 mt-0.5 animate-fade-in">
+                      <Phone className="w-2.5 h-2.5" /> {profile.phone}
+                    </span>
+                  )}
                 </div>
-              )}
-              <div className="flex flex-col">
-                <span className="text-sm font-bold">{profile?.full_name || profile?.username}</span>
-                <span className="text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark font-medium">
-                  {profile?.role === 'admin' ? 'Administrateur' : 'Membre'}
-                </span>
               </div>
             </div>
             
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                handleLogout();
-              }}
-              className="flex items-center gap-2 bg-ios-pink-light/10 dark:bg-ios-pink-dark/15 text-ios-pink-light dark:text-ios-pink-dark px-4 py-2 rounded-ios-lg font-semibold text-sm"
-            >
-              <LogOut className="w-4 h-4" /> Quitter
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  openEditProfile();
+                }}
+                className="flex-1 flex items-center justify-center gap-2 bg-ios-blue-light/10 dark:bg-ios-blue-dark/15 text-ios-blue-light dark:text-ios-blue-dark px-4 py-2.5 rounded-ios-lg font-bold text-sm active:scale-[0.98] transition-all"
+              >
+                <Edit3 className="w-4 h-4" /> Modifier profil
+              </button>
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  handleLogout();
+                }}
+                className="flex-1 flex items-center justify-center gap-2 bg-ios-pink-light/10 dark:bg-ios-pink-dark/15 text-ios-pink-light dark:text-ios-pink-dark px-4 py-2.5 rounded-ios-lg font-bold text-sm active:scale-[0.98] transition-all"
+              >
+                <LogOut className="w-4 h-4" /> Quitter
+              </button>
+            </div>
           </div>
         </div>
       )}
