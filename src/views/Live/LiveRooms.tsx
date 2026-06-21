@@ -510,7 +510,6 @@ export const LiveRooms: React.FC = () => {
     setCallJoined(false);
     setIsDialing(false);
     setSelectedCallUser(null);
-    setIncomingCall(null);
     setIsScreenSharing(false);
     activeCallRef.current = null;
   }, []);
