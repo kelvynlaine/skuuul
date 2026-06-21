@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore, Profile } from '../../store/authStore';
 import { useLiveStore, Livestream } from '../../store/liveStore';
 import { supabase } from '../../services/supabase';
@@ -33,6 +34,8 @@ const RoleBadge: React.FC<{ role: string; small?: boolean }> = ({ role, small })
 };
 
 export const LiveRooms: React.FC = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { profile, profilesList, fetchProfilesList } = useAuthStore();
   const { 
     activeStreams, currentStream, donations, loading, totalEarnings,
@@ -108,6 +111,20 @@ export const LiveRooms: React.FC = () => {
     fetchProfilesList();
     fetchActiveStreams();
   }, [fetchProfilesList, fetchActiveStreams]);
+
+  // Auto-dial when routed with state from other views
+  useEffect(() => {
+    const state = location.state as { dialUser?: Profile } | null;
+    if (state?.dialUser) {
+      const targetUser = state.dialUser;
+      // Clear navigation state to prevent dialing again on refresh
+      navigate(location.pathname, { replace: true, state: {} });
+      // Switch tab to calls
+      setActiveSubTab('calls');
+      // Dial the user
+      handleDialUser(targetUser);
+    }
+  }, [location.state, navigate]);
 
   // Call timer
   useEffect(() => {
@@ -625,6 +642,8 @@ export const LiveRooms: React.FC = () => {
       setLiveChatMessages([{ id: 'sys-1', sender: 'Système', avatar: null, text: '🔴 Le livestream a commencé !' }]);
       // Set up creator signaling channel
       setupCreatorSignaling(stream.id);
+      // Auto-start live camera so tracks are immediately available for P2P viewers
+      await startLiveCamera();
     }
   };
 
@@ -825,15 +844,14 @@ export const LiveRooms: React.FC = () => {
                         </div>
                       </button>
                       <div className="flex items-center gap-2 ml-3">
-                        {u.phone && (
-                          <a href={`tel:${u.phone}`} onClick={e => e.stopPropagation()}
-                            className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 hover:bg-emerald-500/20 transition"
-                            title={`Appeler ${u.full_name || u.username}`}>
-                            <Phone className="w-4 h-4" />
-                          </a>
-                        )}
+                        <button onClick={(e) => { e.stopPropagation(); handleDialUser(u); }}
+                          className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 hover:bg-emerald-500/20 transition"
+                          title={`Appeler ${u.full_name || u.username} sur Skuuul`}>
+                          <Phone className="w-4 h-4" />
+                        </button>
                         <button onClick={() => handleDialUser(u)}
-                          className="p-2 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:opacity-90 transition shadow-sm">
+                          className="p-2 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:opacity-90 transition shadow-sm"
+                          title={`Appel Vidéo ${u.full_name || u.username}`}>
                           <PhoneCall className="w-4 h-4" />
                         </button>
                       </div>

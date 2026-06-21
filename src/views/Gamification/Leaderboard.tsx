@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore, Profile } from '../../store/authStore';
 import { UserProfileModal } from '../../components/UserProfileModal';
 import { Trophy, Sparkles, Star, Zap, Crown, BadgeCheck, UserCircle2, Phone, RefreshCw } from 'lucide-react';
@@ -37,6 +38,7 @@ const XpBar: React.FC<{ user: Profile }> = ({ user }) => {
 };
 
 export const Leaderboard: React.FC = () => {
+  const navigate = useNavigate();
   const { profile, profilesList, fetchProfilesList } = useAuthStore();
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
   const [filter, setFilter] = useState<'all' | 'creator' | 'admin' | 'user'>('all');
@@ -65,6 +67,7 @@ export const Leaderboard: React.FC = () => {
           user={selectedProfile}
           currentUserId={profile?.id}
           onClose={() => setSelectedProfile(null)}
+          onCallWebRTC={(u) => navigate('/live', { state: { dialUser: u } })}
         />
       )}
 
@@ -246,16 +249,16 @@ export const Leaderboard: React.FC = () => {
 
                     {/* Quick actions */}
                     <div className="flex items-center gap-1.5">
-                      {user.phone && (
-                        <a
-                          href={`tel:${user.phone}`}
-                          onClick={e => e.stopPropagation()}
-                          className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/15 text-emerald-500 hover:bg-emerald-500/20 transition"
-                          title={`Appeler ${user.full_name || user.username}`}
-                        >
-                          <Phone className="w-3.5 h-3.5" />
-                        </a>
-                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate('/live', { state: { dialUser: user } });
+                        }}
+                        className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/15 text-emerald-500 hover:bg-emerald-500/20 transition"
+                        title={`Appeler ${user.full_name || user.username} sur Skuuul`}
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
                 </div>

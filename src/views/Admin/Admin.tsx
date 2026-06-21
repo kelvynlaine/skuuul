@@ -1849,14 +1849,13 @@ export const Admin: React.FC = () => {
                             <span className="text-xs font-semibold">{selectedCrmUser.phone || 'Non renseigné'}</span>
                           </div>
                         </div>
-                        {selectedCrmUser.phone && (
-                          <a 
-                            href={`tel:${selectedCrmUser.phone}`}
+                          <Link 
+                            to="/live"
+                            state={{ dialUser: selectedCrmUser }}
                             className="px-2.5 py-1.5 bg-ios-blue-light/10 text-ios-blue-light hover:bg-ios-blue-light/20 text-[10px] font-bold rounded-ios-md transition cursor-pointer"
                           >
                             Appeler
-                          </a>
-                        )}
+                          </Link>
                       </div>
                       
                       {/* Messagerie */}

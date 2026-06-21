@@ -154,22 +154,22 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           {!isSelf && (
             <div className="flex gap-2">
               {onCallWebRTC && (
-                <button
-                  onClick={() => { onCallWebRTC(user); onClose(); }}
-                  className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold py-3 rounded-xl text-sm hover:opacity-95 transition shadow-lg"
-                >
-                  <Video className="w-4 h-4" /> Appel Vidéo
-                </button>
+                <>
+                  <button
+                    onClick={() => { onCallWebRTC(user); onClose(); }}
+                    className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold py-3 rounded-xl text-sm hover:opacity-95 transition shadow-lg"
+                  >
+                    <Video className="w-4 h-4" /> Appel Vidéo
+                  </button>
+                  <button
+                    onClick={() => { onCallWebRTC(user); onClose(); }}
+                    className="flex-1 flex items-center justify-center gap-2 bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 font-bold py-3 rounded-xl text-sm hover:bg-emerald-500/25 transition"
+                  >
+                    <Phone className="w-4 h-4" /> Appeler
+                  </button>
+                </>
               )}
-              {user.phone && (
-                <a
-                  href={`tel:${user.phone}`}
-                  className="flex-1 flex items-center justify-center gap-2 bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 font-bold py-3 rounded-xl text-sm hover:bg-emerald-500/25 transition"
-                >
-                  <Phone className="w-4 h-4" /> Appeler
-                </a>
-              )}
-              {!user.phone && !onCallWebRTC && (
+              {!onCallWebRTC && (
                 <button
                   className="flex-1 flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white/50 font-bold py-3 rounded-xl text-sm cursor-not-allowed"
                   disabled
