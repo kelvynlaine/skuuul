@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useAuthStore } from '../../store/authStore';
+import { useAuthStore, Profile } from '../../store/authStore';
+import { supabase } from '../../services/supabase';
 import { 
   Users, 
   GraduationCap, 
@@ -17,7 +18,8 @@ import {
   UserCheck,
   Phone,
   Edit3,
-  Check
+  Check,
+  Radio
 } from 'lucide-react';
 
 export const Layout: React.FC = () => {
@@ -32,6 +34,86 @@ export const Layout: React.FC = () => {
   const [editFullName, setEditFullName] = useState(profile?.full_name || '');
   const [editIban, setEditIban] = useState(profile?.iban || '');
   const [savingProfile, setSavingProfile] = useState(false);
+
+  // Global Call States
+  const [incomingCall, setIncomingCall] = useState<Profile | null>(null);
+  const activeCallRef = useRef<any>(null);
+  const ringIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ─── GLOBAL INCOMING CALL SYSTEM ──────────────────────────────────────────
+  const playRingSound = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const o1 = ctx.createOscillator(); const o2 = ctx.createOscillator(); const g = ctx.createGain();
+      o1.type = 'sine'; o1.frequency.value = 440; o2.type = 'sine'; o2.frequency.value = 480;
+      g.gain.setValueAtTime(0, ctx.currentTime);
+      g.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.1);
+      g.gain.setValueAtTime(0.2, ctx.currentTime + 1.2);
+      g.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.5);
+      o1.connect(g); o2.connect(g); g.connect(ctx.destination);
+      o1.start(); o2.start();
+      setTimeout(() => { o1.stop(); o2.stop(); ctx.close(); }, 1600);
+    } catch (_) { /* blocked */ }
+  };
+
+  useEffect(() => {
+    if (incomingCall) {
+      ringIntervalRef.current = setInterval(playRingSound, 3000);
+    } else {
+      if (ringIntervalRef.current) clearInterval(ringIntervalRef.current);
+    }
+    return () => { if (ringIntervalRef.current) clearInterval(ringIntervalRef.current); };
+  }, [incomingCall]);
+
+  useEffect(() => {
+    if (!profile) return;
+    const channel = supabase
+      .channel(`global-calls-recv-${profile.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${profile.id}` },
+        async (payload) => {
+          const call = payload.new;
+          if (call.status === 'dialing') {
+            const { data: cp } = await supabase.from('profiles').select('*').eq('id', call.caller_id).single();
+            if (cp) { 
+              setIncomingCall(cp as Profile); 
+              activeCallRef.current = call; 
+              playRingSound(); 
+            }
+          }
+        })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'calls' },
+        async (payload) => {
+          const call = payload.new;
+          if (call.receiver_id === profile.id && activeCallRef.current?.id === call.id) {
+            if (call.status === 'rejected' || call.status === 'ended') {
+              setIncomingCall(null);
+              activeCallRef.current = null;
+            }
+          }
+        })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [profile]);
+
+  const handleDeclineCall = async () => {
+    if (activeCallRef.current) {
+      await supabase.from('calls').update({ status: 'rejected' }).eq('id', activeCallRef.current.id);
+    }
+    setIncomingCall(null);
+    activeCallRef.current = null;
+  };
+
+  const handleAcceptCall = () => {
+    if (!activeCallRef.current || !incomingCall) return;
+    const callRow = activeCallRef.current;
+    const caller = incomingCall;
+    setIncomingCall(null);
+    activeCallRef.current = null;
+    navigate('/live', { state: { acceptCall: true, activeCall: callRow, callerProfile: caller } });
+  };
 
   const toggleDarkMode = () => {
     const root = document.documentElement;
@@ -532,6 +614,34 @@ export const Layout: React.FC = () => {
       <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
         <Outlet />
       </main>
+
+      {/* Global Incoming Call Widget */}
+      {incomingCall && (
+        <div className="fixed bottom-6 right-6 z-50 w-72 rounded-3xl border border-white/10 shadow-2xl overflow-hidden animate-scale-in" style={{ background: 'linear-gradient(145deg, rgba(30,30,40,0.98), rgba(20,20,30,0.99))' }}>
+          <div className="p-5 flex flex-col items-center text-center gap-4">
+            <div className="relative">
+              <div className="absolute inset-[-8px] bg-blue-500/25 rounded-full animate-ping" />
+              {incomingCall.avatar_url ? (
+                <img src={incomingCall.avatar_url} alt={incomingCall.username} className="w-16 h-16 rounded-2xl object-cover border-2 border-blue-400 relative z-10" />
+              ) : (
+                <div className="w-16 h-16 rounded-2xl bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-2xl relative z-10 border-2 border-blue-400">
+                  {incomingCall.username[0].toUpperCase()}
+                </div>
+              )}
+            </div>
+            <div>
+              <p className="text-white font-extrabold text-sm">{incomingCall.full_name || incomingCall.username}</p>
+              <p className="text-blue-400 text-xs font-semibold flex items-center justify-center gap-1 mt-0.5 animate-pulse">
+                <Radio className="w-3.5 h-3.5 text-blue-500" /> Appel vidéo entrant...
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 w-full">
+              <button onClick={handleDeclineCall} className="py-2 rounded-xl bg-red-500/15 border border-red-500/25 text-red-400 font-bold text-xs hover:bg-red-500/25 transition">Refuser</button>
+              <button onClick={handleAcceptCall} className="py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 font-bold text-xs hover:bg-emerald-500/25 transition animate-pulse">Accepter</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

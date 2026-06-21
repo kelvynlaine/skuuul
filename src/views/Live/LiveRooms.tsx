@@ -58,7 +58,6 @@ export const LiveRooms: React.FC = () => {
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [selectedCallUser, setSelectedCallUser] = useState<Profile | null>(null);
   const [isDialing, setIsDialing] = useState(false);
-  const [incomingCall, setIncomingCall] = useState<Profile | null>(null);
   const [lobbyCamera, setLobbyCamera] = useState(false);
   const [audioLevel, setAudioLevel] = useState(20);
   const ringIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -148,27 +147,19 @@ export const LiveRooms: React.FC = () => {
   useEffect(() => { localStreamRef.current?.getVideoTracks().forEach(t => { t.enabled = myCam; }); }, [myCam]);
 
   useEffect(() => {
-    if (isDialing || incomingCall) {
+    if (isDialing) {
       ringIntervalRef.current = setInterval(playRingSound, 3000);
     } else {
       if (ringIntervalRef.current) clearInterval(ringIntervalRef.current);
     }
     return () => { if (ringIntervalRef.current) clearInterval(ringIntervalRef.current); };
-  }, [isDialing, incomingCall]);
+  }, [isDialing]);
 
   // Supabase call signaling
   useEffect(() => {
     if (!profile) return;
     const channel = supabase
       .channel(`calls-recv-${profile.id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${profile.id}` },
-        async (payload) => {
-          const call = payload.new;
-          if (call.status === 'dialing') {
-            const { data: cp } = await supabase.from('profiles').select('*').eq('id', call.caller_id).single();
-            if (cp) { setIncomingCall(cp as Profile); activeCallRef.current = call; playRingSound(); }
-          }
-        })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'calls' },
         async (payload) => {
           const call = payload.new;
@@ -562,41 +553,7 @@ export const LiveRooms: React.FC = () => {
     }
   };
 
-  const handleAcceptCall = async () => {
-    const callRow = activeCallRef.current;
-    if (!callRow || !incomingCall || !profile) return;
-    try {
-      setSelectedCallUser(incomingCall);
-      setIncomingCall(null);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-      localStreamRef.current = stream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-      const pc = makePC();
-      peerConnectionRef.current = pc;
-      stream.getTracks().forEach(t => pc.addTrack(t, stream));
-      await pc.setRemoteDescription(new RTCSessionDescription(callRow.signal_data?.offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      let sent = false;
-      const send = async () => {
-        if (sent) return; sent = true;
-        const { error } = await supabase.from('calls').update({
-          status: 'active', signal_data: { offer: callRow.signal_data?.offer, answer: pc.localDescription }
-        }).eq('id', callRow.id);
-        if (error) { hangUpLocally(); } else setCallJoined(true);
-      };
-      pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') send(); };
-      setTimeout(send, 2000);
-    } catch (err: any) {
-      hangUpLocally();
-      alert(err.name === 'NotAllowedError' ? 'Permission caméra/micro refusée.' : `Erreur : ${err.message}`);
-    }
-  };
-
-  const handleDeclineCall = async () => {
-    if (activeCallRef.current) await supabase.from('calls').update({ status: 'rejected' }).eq('id', activeCallRef.current.id);
-    setIncomingCall(null); activeCallRef.current = null;
-  };
+  // Note: handleAcceptCall and handleDeclineCall are now managed globally by the Layout component
 
   const handleHangUp = async () => {
     if (activeCallRef.current) await supabase.from('calls').update({ status: 'ended' }).eq('id', activeCallRef.current.id);
@@ -640,8 +597,6 @@ export const LiveRooms: React.FC = () => {
     if (stream) {
       setStreamTitle(''); setStreamDesc('');
       setLiveChatMessages([{ id: 'sys-1', sender: 'Système', avatar: null, text: '🔴 Le livestream a commencé !' }]);
-      // Set up creator signaling channel
-      setupCreatorSignaling(stream.id);
       // Auto-start live camera so tracks are immediately available for P2P viewers
       await startLiveCamera();
     }
@@ -649,7 +604,6 @@ export const LiveRooms: React.FC = () => {
 
   const handleStopStream = async () => {
     stopLiveCamera();
-    teardownCreatorSignaling();
     if (currentStream) await endStream(currentStream.id);
   };
 
@@ -692,6 +646,60 @@ export const LiveRooms: React.FC = () => {
 
   const formatDuration = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
+  // Creator signaling channel reactive lifecycle
+  useEffect(() => {
+    if (currentStream) {
+      setupCreatorSignaling(currentStream.id);
+    }
+    return () => {
+      teardownCreatorSignaling();
+    };
+  }, [currentStream, setupCreatorSignaling]);
+
+  // Auto-accept call when routed from global Layout notification
+  useEffect(() => {
+    const state = location.state as { acceptCall?: boolean; activeCall?: any; callerProfile?: Profile } | null;
+    if (state?.acceptCall && state.activeCall && state.callerProfile) {
+      const callRow = state.activeCall;
+      const caller = state.callerProfile;
+      // Clear navigation state
+      navigate(location.pathname, { replace: true, state: {} });
+      // Set subtab to calls
+      setActiveSubTab('calls');
+      
+      const join = async () => {
+        setSelectedCallUser(caller);
+        activeCallRef.current = callRow;
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+          localStreamRef.current = stream;
+          if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+          const pc = makePC();
+          peerConnectionRef.current = pc;
+          stream.getTracks().forEach(t => pc.addTrack(t, stream));
+          await pc.setRemoteDescription(new RTCSessionDescription(callRow.signal_data?.offer));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          let sent = false;
+          const send = async () => {
+            if (sent) return; sent = true;
+            const { error } = await supabase.from('calls').update({
+              status: 'active', signal_data: { offer: callRow.signal_data?.offer, answer: pc.localDescription }
+            }).eq('id', callRow.id);
+            if (error) { hangUpLocally(); } else setCallJoined(true);
+          };
+          pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') send(); };
+          setTimeout(send, 2000);
+        } catch (err: any) {
+          hangUpLocally();
+          alert(err.name === 'NotAllowedError' ? 'Permission caméra/micro refusée.' : `Erreur : ${err.message}`);
+        }
+      };
+      
+      join();
+    }
+  }, [location.state, navigate]); // eslint-disable-line
+
   // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-2 relative min-h-[700px]">
@@ -716,33 +724,7 @@ export const LiveRooms: React.FC = () => {
         </div>
       )}
 
-      {/* Incoming Call Widget */}
-      {incomingCall && (
-        <div className="fixed bottom-6 right-6 z-50 w-72 rounded-3xl border border-white/10 shadow-2xl overflow-hidden" style={{ background: 'linear-gradient(145deg, rgba(30,30,40,0.98), rgba(20,20,30,0.99))' }}>
-          <div className="p-5 flex flex-col items-center text-center gap-4">
-            <div className="relative">
-              <div className="absolute inset-[-8px] bg-blue-500/25 rounded-full animate-ping" />
-              {incomingCall.avatar_url ? (
-                <img src={incomingCall.avatar_url} alt={incomingCall.username} className="w-16 h-16 rounded-2xl object-cover border-2 border-blue-400 relative z-10" />
-              ) : (
-                <div className="w-16 h-16 rounded-2xl bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-2xl relative z-10 border-2 border-blue-400">
-                  {incomingCall.username[0].toUpperCase()}
-                </div>
-              )}
-            </div>
-            <div>
-              <p className="text-white font-extrabold">{incomingCall.full_name || incomingCall.username}</p>
-              <p className="text-blue-400 text-xs font-semibold flex items-center justify-center gap-1 mt-0.5 animate-pulse">
-                <Radio className="w-3 h-3" /> Appel vidéo entrant...
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 w-full">
-              <button onClick={handleDeclineCall} className="py-2.5 rounded-xl bg-red-500/15 border border-red-500/25 text-red-400 font-bold text-sm hover:bg-red-500/25 transition">Refuser</button>
-              <button onClick={handleAcceptCall} className="py-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 font-bold text-sm hover:bg-emerald-500/25 transition animate-pulse">Accepter</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Note: Incoming Call Widget is now managed globally by the Layout component */}
 
       {/* ── Tabs Header ── */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-black/5 dark:border-white/5 pb-4">

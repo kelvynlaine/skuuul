@@ -62,7 +62,17 @@ export const useLiveStore = create<LiveState>((set, get) => ({
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      set({ activeStreams: data as unknown as Livestream[] });
+      const list = data as unknown as Livestream[];
+      set({ activeStreams: list });
+
+      // Automatically recover active stream if current user is the creator
+      const { profile } = useAuthStore.getState();
+      if (profile) {
+        const myActiveStream = list.find(s => s.creator_id === profile.id);
+        if (myActiveStream) {
+          set({ currentStream: myActiveStream });
+        }
+      }
     } catch (e) {
       console.error("Failed to fetch active streams:", e);
       set({ activeStreams: [] });
