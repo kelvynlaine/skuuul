@@ -74,6 +74,7 @@ export const LiveRooms: React.FC = () => {
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const lobbyVideoRef = useRef<HTMLVideoElement | null>(null);
   const lobbyStreamRef = useRef<MediaStream | null>(null);
+  const callChatChannelRef = useRef<any>(null);
 
   // ─── LIVESTREAM STATE ─────────────────────────────────────────────────────
   const [streamTitle, setStreamTitle] = useState('');
@@ -517,6 +518,8 @@ export const LiveRooms: React.FC = () => {
     setIsScreenSharing(false);
     setAudioBlocked(false);
     setShowSidePanel(false);
+    setCallChatMessages([]);
+    setCallChatInput('');
     activeCallRef.current = null;
   }, []);
 
@@ -569,6 +572,38 @@ export const LiveRooms: React.FC = () => {
       attachRemoteStream(remoteStreamRef.current);
     }
   }, [callJoined, attachRemoteStream]);
+
+  // ─── IN-CALL CHAT & SHARED NOTES (realtime broadcast per call) ────────────
+  // Both participants join a broadcast channel keyed on the call id so chat
+  // messages and the shared notepad sync live between them.
+  useEffect(() => {
+    if (!callJoined) return;
+    const callId = activeCallRef.current?.id;
+    if (!callId) return;
+
+    const channel = supabase.channel(`call-rtc-${callId}`, {
+      config: { broadcast: { self: false } },
+    });
+
+    channel
+      .on('broadcast', { event: 'chat' }, ({ payload }: any) => {
+        setCallChatMessages(prev => {
+          if (prev.some(m => m.id === payload.id)) return prev;
+          return [...prev, { id: payload.id, sender: payload.sender, text: payload.text, isSelf: false }];
+        });
+      })
+      .on('broadcast', { event: 'notes' }, ({ payload }: any) => {
+        setNotesContent(payload.content ?? '');
+      })
+      .subscribe();
+
+    callChatChannelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      callChatChannelRef.current = null;
+    };
+  }, [callJoined]);
 
   const handleDialUser = async (user: Profile) => {
     if (!profile) return;
@@ -677,9 +712,18 @@ export const LiveRooms: React.FC = () => {
 
   const handleSendCallMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!callChatInput.trim()) return;
-    setCallChatMessages([...callChatMessages, { id: Date.now().toString(), sender: profile?.full_name || `@${profile?.username}` || 'Moi', text: callChatInput.trim(), isSelf: true }]);
+    const text = callChatInput.trim();
+    if (!text) return;
+    const sender = profile?.full_name || (profile?.username ? `@${profile.username}` : 'Moi');
+    const id = `${profile?.id || 'me'}-${Date.now()}`;
+    setCallChatMessages(prev => [...prev, { id, sender, text, isSelf: true }]);
+    callChatChannelRef.current?.send({ type: 'broadcast', event: 'chat', payload: { id, sender, text } });
     setCallChatInput('');
+  };
+
+  const handleNotesChange = (content: string) => {
+    setNotesContent(content);
+    callChatChannelRef.current?.send({ type: 'broadcast', event: 'notes', payload: { content } });
   };
 
   const handleDonationSubmit = async (e: React.FormEvent) => {
@@ -1028,7 +1072,7 @@ export const LiveRooms: React.FC = () => {
                     </div>
                   ) : (
                     <div className="h-full flex flex-col min-h-0">
-                      <textarea value={notesContent} onChange={e => setNotesContent(e.target.value)}
+                      <textarea value={notesContent} onChange={e => handleNotesChange(e.target.value)}
                         className="w-full flex-1 min-h-0 bg-transparent p-2 text-xs rounded-xl focus:outline-none font-mono leading-relaxed resize-none" />
                     </div>
                   )}
