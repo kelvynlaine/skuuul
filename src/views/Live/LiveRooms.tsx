@@ -802,7 +802,7 @@ export const LiveRooms: React.FC = () => {
                   </button>
                 </div>
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                  {profilesList.filter(u => u.id !== profile?.id).map(u => (
+                  {profilesList.filter(u => u.id !== profile?.id && !u.is_banned).map(u => (
                     <div key={u.id} className="flex items-center justify-between p-3.5 rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 hover:bg-black/8 transition">
                       <button onClick={() => setSelectedProfile(u)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
                         {u.avatar_url ? (
@@ -838,7 +838,7 @@ export const LiveRooms: React.FC = () => {
                       </div>
                     </div>
                   ))}
-                  {profilesList.filter(u => u.id !== profile?.id).length === 0 && (
+                  {profilesList.filter(u => u.id !== profile?.id && !u.is_banned).length === 0 && (
                     <div className="text-center py-16 text-ios-label-secondaryLight text-sm flex flex-col items-center gap-3">
                       <Users className="w-10 h-10 opacity-30" />Aucun autre membre.
                     </div>
@@ -1133,8 +1133,11 @@ export const LiveRooms: React.FC = () => {
             </div>
           )}
 
-          {/* VIEWER — catalog + stream player */}
-          {(!profile || profile.role === 'user' || viewingStream) && (
+          {/* VIEWER — catalog + stream player.
+              Visible to EVERYONE (members, creators, admins) so all roles can
+              browse and join active livestreams. Creators/admins also keep their
+              dashboard above this block when they are not currently watching. */}
+          {(
             <div>
               {viewingStream ? (
                 <div className="grid md:grid-cols-3 gap-5">
@@ -1225,11 +1228,19 @@ export const LiveRooms: React.FC = () => {
               ) : (
                 /* Stream catalog */
                 <div className="space-y-5">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-extrabold uppercase tracking-wider flex items-center gap-2">
+                      <Radio className="w-4 h-4 text-red-500" /> Lives en cours
+                    </h3>
+                    <button onClick={fetchActiveStreams} className="p-1.5 text-ios-label-secondaryLight hover:text-ios-label-primaryLight transition rounded-lg hover:bg-black/5">
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                   {loading ? (
                     <div className="text-center py-12"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" /></div>
                   ) : (
                     <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                      {activeStreams.map(stream => (
+                      {activeStreams.filter(stream => stream.creator_id !== profile?.id).map(stream => (
                         <div key={stream.id} className="glass-panel rounded-2xl border border-black/5 dark:border-white/5 overflow-hidden shadow-ios-soft">
                           <div className="aspect-video bg-neutral-900 flex items-center justify-center relative border-b border-black/5">
                             <span className="absolute top-3 left-3 bg-red-500 text-white text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider animate-pulse flex items-center gap-1">
@@ -1257,7 +1268,7 @@ export const LiveRooms: React.FC = () => {
                           </div>
                         </div>
                       ))}
-                      {activeStreams.length === 0 && (
+                      {activeStreams.filter(stream => stream.creator_id !== profile?.id).length === 0 && (
                         <div className="col-span-full glass-panel p-12 rounded-2xl border border-black/5 dark:border-white/5 text-center space-y-4">
                           <div className="w-14 h-14 bg-black/5 dark:bg-white/5 rounded-xl flex items-center justify-center text-2xl mx-auto">📺</div>
                           <div>

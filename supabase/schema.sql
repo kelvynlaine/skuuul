@@ -1068,6 +1068,52 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 
+-- ---------------------------------------------------------------------
+-- 8. REALTIME PUBLICATION
+-- ---------------------------------------------------------------------
+-- The frontend relies on Supabase Realtime "postgres_changes" events for
+-- incoming call detection (calls), live donation alerts (donations) and the
+-- livestream catalog. Tables must be part of the supabase_realtime publication
+-- AND have REPLICA IDENTITY FULL, otherwise these subscriptions never fire and
+-- calls / live features appear broken.
+DO $$
+BEGIN
+    -- Ensure the publication exists (it is created by default on Supabase).
+    IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        CREATE PUBLICATION supabase_realtime;
+    END IF;
+END $$;
+
+ALTER TABLE public.calls REPLICA IDENTITY FULL;
+ALTER TABLE public.donations REPLICA IDENTITY FULL;
+ALTER TABLE public.livestreams REPLICA IDENTITY FULL;
+
+-- Add tables to the realtime publication (guarded so re-running is safe).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'calls'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.calls;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'donations'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.donations;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'livestreams'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.livestreams;
+    END IF;
+END $$;
+
+
 
 
 
