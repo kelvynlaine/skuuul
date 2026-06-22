@@ -120,6 +120,23 @@ div[contenteditable]:empty::before {
   pointer-events: none;
 }
 
+.dark div[contenteditable]:empty::before {
+  color: #c7c7cc;
+  opacity: 0.8;
+}
+
+/* Dark mode: override "Light" label tokens used without a dark: prefix.
+   Specificity (2 classes) beats Tailwind utilities (1 class), so this
+   fixes all components that forgot to add dark:text-ios-label-*Dark. */
+.dark .text-ios-label-secondaryLight     { color: #ebebf5; }
+.dark .text-ios-label-secondaryLight\/50 { color: rgba(235, 235, 245, 0.50); }
+.dark .text-ios-label-secondaryLight\/60 { color: rgba(235, 235, 245, 0.60); }
+.dark .text-ios-label-secondaryLight\/70 { color: rgba(235, 235, 245, 0.70); }
+.dark .text-ios-label-secondaryLight\/80 { color: rgba(235, 235, 245, 0.80); }
+.dark .text-ios-label-primaryLight       { color: #ffffff; }
+.dark .hover\:text-ios-label-primaryLight:hover   { color: #ffffff; }
+.dark .hover\:text-ios-label-secondaryLight:hover { color: #ebebf5; }
+
 /* author highlight dashed styling when show-authors is active */
 .show-authors span[data-author] {
   position: relative;

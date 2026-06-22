@@ -591,7 +591,7 @@ export const Community: React.FC = () => {
             </div>
             <div className="flex items-center justify-between bg-black/5 dark:bg-white/5 px-3 py-2 rounded-ios-lg">
               <div className="flex items-center gap-2.5">
-                <span className="text-xs font-extrabold text-ios-gray-1">2.</span>
+                <span className="text-xs font-extrabold text-ios-gray-1 dark:text-ios-gray-3">2.</span>
                 <span className="text-xs font-bold">jane_doe</span>
               </div>
               <span className="text-[10px] font-bold bg-ios-orange-light/10 text-ios-orange-light px-2 py-0.5 rounded-full">
