@@ -1,8 +1,11 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { MessageCircle, Send, ArrowLeft, User, Search, X, Trash2, Check, CheckCheck, PenSquare, Loader2 } from 'lucide-react';
+import {
+  MessageCircle, Send, ArrowLeft, User, Search, X, Trash2, Check, CheckCheck,
+  PenSquare, Loader2, Reply, Pencil, Pin, PinOff, ChevronUp, ChevronDown,
+} from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
-import { useMessageStore, Conversation, MemberResult } from '../../store/messageStore';
+import { useMessageStore, Conversation, MemberResult, DirectMessage } from '../../store/messageStore';
 
 const isToday = (d: Date) => {
   const n = new Date();
@@ -20,6 +23,18 @@ const dayLabel = (iso: string) => {
   return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 };
 
+// Highlight occurrences of `query` inside `text`
+const renderHighlighted = (text: string, query: string): React.ReactNode => {
+  const q = query.trim();
+  if (!q) return text;
+  const parts = text.split(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'));
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase()
+      ? <mark key={i} className="bg-ios-orange-light/50 dark:bg-ios-orange-dark/50 text-inherit rounded px-0.5">{part}</mark>
+      : part
+  );
+};
+
 export const MessagesView: React.FC = () => {
   const { profile } = useAuthStore();
   const location = useLocation();
@@ -32,6 +47,8 @@ export const MessagesView: React.FC = () => {
     fetchConversations,
     fetchMessages,
     sendMessage,
+    editMessage,
+    togglePin,
     deleteMessage,
     getOrCreateConversation,
     markConversationRead,
@@ -50,9 +67,18 @@ export const MessagesView: React.FC = () => {
   const [searchingMembers, setSearchingMembers] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
 
+  // Lot 1 state
+  const [replyTo, setReplyTo] = useState<DirectMessage | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [threadSearchOpen, setThreadSearchOpen] = useState(false);
+  const [threadQuery, setThreadQuery] = useState('');
+  const [matchIndex, setMatchIndex] = useState(0);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     if (profile) {
@@ -90,8 +116,8 @@ export const MessagesView: React.FC = () => {
   }, [location.state]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, typingUsers]);
+    if (!threadSearchOpen) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, typingUsers, threadSearchOpen]);
 
   // Debounced member search for "new conversation"
   useEffect(() => {
@@ -107,10 +133,23 @@ export const MessagesView: React.FC = () => {
     return () => clearTimeout(t);
   }, [convSearch, newChatOpen, profile, searchMembers]);
 
+  const flashMessage = useCallback((id: string) => {
+    messageRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightId(id);
+    setTimeout(() => setHighlightId(curr => (curr === id ? null : curr)), 1600);
+  }, []);
+
+  const resetThreadExtras = () => {
+    setReplyTo(null); setEditingId(null); setInput('');
+    setThreadSearchOpen(false); setThreadQuery(''); setMatchIndex(0);
+  };
+
   const openConversation = useCallback(async (conv: Conversation) => {
     setSelected(conv);
     setNewChatOpen(false);
     setConvSearch('');
+    setReplyTo(null); setEditingId(null); setInput('');
+    setThreadSearchOpen(false); setThreadQuery('');
     await fetchMessages(conv.id);
     subscribeToConversation(conv.id, profile!.id);
     if (profile) markConversationRead(conv.id, profile.id);
@@ -136,19 +175,43 @@ export const MessagesView: React.FC = () => {
     });
   };
 
+  const startReply = (msg: DirectMessage) => {
+    setEditingId(null);
+    setReplyTo(msg);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const startEdit = (msg: DirectMessage) => {
+    setReplyTo(null);
+    setEditingId(msg.id);
+    setInput(msg.content);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const cancelComposerExtra = () => {
+    setReplyTo(null);
+    if (editingId) { setEditingId(null); setInput(''); }
+  };
+
   const handleSend = async () => {
     if (!input.trim() || !selected || !profile || sending) return;
-    setSending(true);
     const text = input.trim();
+    setSending(true);
+    if (editingId) {
+      await editMessage(editingId, text);
+      setEditingId(null);
+    } else {
+      await sendMessage(selected.id, profile.id, text, replyTo?.id ?? null);
+      setReplyTo(null);
+    }
     setInput('');
-    await sendMessage(selected.id, profile.id, text);
     setSending(false);
     inputRef.current?.focus();
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
-    if (selected && profile) {
+    if (selected && profile && !editingId) {
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       broadcastTyping(profile.id);
       typingTimerRef.current = setTimeout(() => {}, 1500);
@@ -157,6 +220,7 @@ export const MessagesView: React.FC = () => {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (e.key === 'Escape') cancelComposerExtra();
   };
 
   // Filter conversation list by local search
@@ -172,6 +236,30 @@ export const MessagesView: React.FC = () => {
 
   const otherOnline = selected?.other_profile && onlineUsers.has(selected.other_profile.id);
   const isTyping = selected?.other_profile && typingUsers.has(selected.other_profile.id);
+
+  const pinned = useMemo(() => messages.filter(m => m.is_pinned), [messages]);
+
+  // Thread search matches
+  const matches = useMemo(() => {
+    const q = threadQuery.trim().toLowerCase();
+    if (!q) return [] as DirectMessage[];
+    return messages.filter(m => m.content.toLowerCase().includes(q));
+  }, [threadQuery, messages]);
+
+  useEffect(() => {
+    if (matches.length === 0) return;
+    const idx = Math.min(matchIndex, matches.length - 1);
+    flashMessage(matches[idx].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchIndex, threadQuery]);
+
+  const gotoMatch = (dir: 1 | -1) => {
+    if (matches.length === 0) return;
+    setMatchIndex(i => (i + dir + matches.length) % matches.length);
+  };
+
+  const senderLabel = (id: string) =>
+    id === profile?.id ? 'Vous' : (selected?.other_profile?.full_name || selected?.other_profile?.username || 'Membre');
 
   const renderAvatar = (
     prof: { username: string; avatar_url: string | null } | undefined,
@@ -328,7 +416,7 @@ export const MessagesView: React.FC = () => {
           <>
             {/* Thread header */}
             <div className="px-3 md:px-4 py-3 border-b border-black/5 dark:border-white/5 flex items-center gap-3">
-              <button onClick={() => { setSelected(null); unsubscribeFromConversation(); }} className="md:hidden p-1 -ml-1">
+              <button onClick={() => { setSelected(null); unsubscribeFromConversation(); resetThreadExtras(); }} className="md:hidden p-1 -ml-1">
                 <ArrowLeft className="w-5 h-5" />
               </button>
               {renderAvatar(selected.other_profile, 'w-9 h-9', true, !!otherOnline)}
@@ -347,7 +435,53 @@ export const MessagesView: React.FC = () => {
                   )}
                 </p>
               </button>
+              <button
+                onClick={() => { setThreadSearchOpen(o => !o); setThreadQuery(''); setMatchIndex(0); }}
+                className={`p-2 rounded-ios-lg transition shrink-0 ${threadSearchOpen ? 'bg-ios-blue-light dark:bg-ios-blue-dark text-white' : 'hover:bg-black/5 dark:hover:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'}`}
+                title="Rechercher dans la conversation"
+              >
+                <Search className="w-4 h-4" />
+              </button>
             </div>
+
+            {/* In-thread search bar */}
+            {threadSearchOpen && (
+              <div className="px-3 md:px-4 py-2 border-b border-black/5 dark:border-white/5 flex items-center gap-2 bg-black/3 dark:bg-white/3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark" />
+                  <input
+                    autoFocus
+                    type="text"
+                    value={threadQuery}
+                    onChange={e => { setThreadQuery(e.target.value); setMatchIndex(0); }}
+                    placeholder="Rechercher dans ce fil..."
+                    className="w-full bg-black/5 dark:bg-white/5 rounded-ios-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ios-blue-light"
+                  />
+                </div>
+                <span className="text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark tabular-nums min-w-[3rem] text-center">
+                  {matches.length > 0 ? `${matchIndex + 1}/${matches.length}` : '0/0'}
+                </span>
+                <button onClick={() => gotoMatch(-1)} disabled={matches.length === 0} className="p-1.5 rounded-ios-md hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-30"><ChevronUp className="w-4 h-4" /></button>
+                <button onClick={() => gotoMatch(1)} disabled={matches.length === 0} className="p-1.5 rounded-ios-md hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-30"><ChevronDown className="w-4 h-4" /></button>
+                <button onClick={() => { setThreadSearchOpen(false); setThreadQuery(''); }} className="p-1.5 rounded-ios-md hover:bg-black/5 dark:hover:bg-white/5"><X className="w-4 h-4" /></button>
+              </div>
+            )}
+
+            {/* Pinned banner */}
+            {pinned.length > 0 && !threadSearchOpen && (
+              <button
+                onClick={() => flashMessage(pinned[pinned.length - 1].id)}
+                className="px-3 md:px-4 py-2 border-b border-black/5 dark:border-white/5 flex items-center gap-2 bg-ios-orange-light/5 dark:bg-ios-orange-dark/10 text-left hover:bg-ios-orange-light/10 dark:hover:bg-ios-orange-dark/15 transition"
+              >
+                <Pin className="w-3.5 h-3.5 text-ios-orange-light dark:text-ios-orange-dark shrink-0 fill-current" />
+                <span className="text-[11px] font-bold text-ios-orange-light dark:text-ios-orange-dark shrink-0">
+                  {pinned.length > 1 ? `${pinned.length} épinglés` : 'Épinglé'}
+                </span>
+                <span className="text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark truncate">
+                  {pinned[pinned.length - 1].content || 'Pièce jointe'}
+                </span>
+              </button>
+            )}
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-1">
@@ -364,6 +498,7 @@ export const MessagesView: React.FC = () => {
                 const showDay = !prev || dayLabel(prev.created_at) !== dayLabel(msg.created_at);
                 const grouped = prev && prev.sender_id === msg.sender_id && !showDay &&
                   (new Date(msg.created_at).getTime() - new Date(prev.created_at).getTime() < 120000);
+                const highlighted = highlightId === msg.id;
                 return (
                   <React.Fragment key={msg.id}>
                     {showDay && (
@@ -373,27 +508,55 @@ export const MessagesView: React.FC = () => {
                         </span>
                       </div>
                     )}
-                    <div className={`group flex items-end gap-1.5 ${isMe ? 'justify-end' : 'justify-start'} ${grouped ? 'mt-0.5' : 'mt-2'}`}>
+                    <div
+                      ref={el => { messageRefs.current[msg.id] = el; }}
+                      className={`group flex items-end gap-1 ${isMe ? 'justify-end' : 'justify-start'} ${grouped ? 'mt-0.5' : 'mt-2'} rounded-2xl transition-colors ${highlighted ? 'ring-2 ring-ios-orange-light dark:ring-ios-orange-dark ring-offset-2 ring-offset-transparent' : ''}`}
+                    >
+                      {/* Action toolbar (left of my messages) */}
                       {isMe && (
-                        <button
-                          onClick={() => deleteMessage(msg.id)}
-                          className="opacity-0 group-hover:opacity-100 transition p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-red-light dark:hover:text-ios-red-dark"
-                          title="Supprimer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition shrink-0">
+                          <button onClick={() => startReply(msg)} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-blue-light dark:hover:text-ios-blue-dark" title="Répondre"><Reply className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => togglePin(msg.id)} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-orange-light dark:hover:text-ios-orange-dark" title={msg.is_pinned ? 'Désépingler' : 'Épingler'}>{msg.is_pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}</button>
+                          <button onClick={() => startEdit(msg)} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-blue-light dark:hover:text-ios-blue-dark" title="Modifier"><Pencil className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => deleteMessage(msg.id)} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-red-light dark:hover:text-ios-red-dark" title="Supprimer"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
                       )}
-                      <div className={`max-w-[80%] md:max-w-[70%] px-3 py-2 text-sm ${
+
+                      <div className={`relative max-w-[80%] md:max-w-[70%] px-3 py-2 text-sm ${
                         isMe
                           ? `bg-ios-blue-light dark:bg-ios-blue-dark text-white rounded-2xl ${grouped ? 'rounded-tr-md' : ''} rounded-br-md`
                           : `bg-black/5 dark:bg-white/10 rounded-2xl ${grouped ? 'rounded-tl-md' : ''} rounded-bl-md`
                       } ${msg.pending ? 'opacity-60' : ''}`}>
-                        <p className="leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
+                        {msg.is_pinned && (
+                          <Pin className={`absolute -top-1.5 ${isMe ? '-left-1.5' : '-right-1.5'} w-3 h-3 text-ios-orange-light dark:text-ios-orange-dark fill-current`} />
+                        )}
+                        {/* Quoted reply */}
+                        {msg.reply_preview && (
+                          <button
+                            onClick={() => flashMessage(msg.reply_preview!.id)}
+                            className={`block w-full text-left mb-1 pl-2 border-l-2 rounded-sm ${isMe ? 'border-white/50' : 'border-ios-blue-light dark:border-ios-blue-dark'}`}
+                          >
+                            <p className={`text-[10px] font-bold ${isMe ? 'text-white/80' : 'text-ios-blue-light dark:text-ios-blue-dark'}`}>{senderLabel(msg.reply_preview.sender_id)}</p>
+                            <p className={`text-[11px] truncate ${isMe ? 'text-white/70' : 'text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'}`}>{msg.reply_preview.content || 'Pièce jointe'}</p>
+                          </button>
+                        )}
+                        <p className="leading-relaxed whitespace-pre-wrap break-words">
+                          {threadSearchOpen && threadQuery ? renderHighlighted(msg.content, threadQuery) : msg.content}
+                        </p>
                         <p className={`text-[10px] mt-0.5 flex items-center gap-1 justify-end ${isMe ? 'text-white/60' : 'text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'}`}>
+                          {msg.edited_at && <span className="italic">modifié</span>}
                           {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                           {isMe && (msg.pending ? <Loader2 className="w-3 h-3 animate-spin" /> : msg.is_read ? <CheckCheck className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />)}
                         </p>
                       </div>
+
+                      {/* Action toolbar (right of others' messages) */}
+                      {!isMe && (
+                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition shrink-0">
+                          <button onClick={() => startReply(msg)} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-blue-light dark:hover:text-ios-blue-dark" title="Répondre"><Reply className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => togglePin(msg.id)} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-orange-light dark:hover:text-ios-orange-dark" title={msg.is_pinned ? 'Désépingler' : 'Épingler'}>{msg.is_pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}</button>
+                        </div>
+                      )}
                     </div>
                   </React.Fragment>
                 );
@@ -410,6 +573,26 @@ export const MessagesView: React.FC = () => {
               <div ref={messagesEndRef} />
             </div>
 
+            {/* Reply / edit indicator */}
+            {(replyTo || editingId) && (
+              <div className="px-3 md:px-4 py-2 border-t border-black/5 dark:border-white/5 flex items-center gap-2 bg-black/3 dark:bg-white/3">
+                {editingId ? (
+                  <Pencil className="w-4 h-4 text-ios-blue-light dark:text-ios-blue-dark shrink-0" />
+                ) : (
+                  <Reply className="w-4 h-4 text-ios-blue-light dark:text-ios-blue-dark shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-bold text-ios-blue-light dark:text-ios-blue-dark">
+                    {editingId ? 'Modification du message' : `Réponse à ${replyTo ? senderLabel(replyTo.sender_id) : ''}`}
+                  </p>
+                  {replyTo && !editingId && (
+                    <p className="text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark truncate">{replyTo.content || 'Pièce jointe'}</p>
+                  )}
+                </div>
+                <button onClick={cancelComposerExtra} className="p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/5"><X className="w-4 h-4" /></button>
+              </div>
+            )}
+
             {/* Input */}
             <div className="p-2.5 md:p-3 border-t border-black/5 dark:border-white/5 flex items-end gap-2">
               <input
@@ -418,15 +601,16 @@ export const MessagesView: React.FC = () => {
                 value={input}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
-                placeholder="Écrire un message..."
+                placeholder={editingId ? 'Modifier le message...' : 'Écrire un message...'}
                 className="flex-1 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/5 rounded-full px-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-ios-blue-light"
               />
               <button
                 onClick={handleSend}
                 disabled={!input.trim() || sending}
                 className="p-2.5 rounded-full bg-ios-blue-light dark:bg-ios-blue-dark text-white disabled:opacity-40 hover:opacity-90 transition shrink-0"
+                title={editingId ? 'Enregistrer' : 'Envoyer'}
               >
-                <Send className="w-4 h-4" />
+                {editingId ? <Check className="w-4 h-4" /> : <Send className="w-4 h-4" />}
               </button>
             </div>
           </>

@@ -19,6 +19,12 @@ export interface Conversation {
   last_message_sender?: string | null;
 }
 
+export interface ReplyPreview {
+  id: string;
+  content: string;
+  sender_id: string;
+}
+
 export interface DirectMessage {
   id: string;
   conversation_id: string;
@@ -26,6 +32,10 @@ export interface DirectMessage {
   content: string;
   is_read: boolean;
   created_at: string;
+  reply_to_id?: string | null;
+  reply_preview?: ReplyPreview | null;
+  edited_at?: string | null;
+  is_pinned?: boolean;
   pending?: boolean;
 }
 
@@ -50,7 +60,9 @@ interface MessageState {
 
   fetchConversations: (userId: string) => Promise<void>;
   fetchMessages: (conversationId: string) => Promise<void>;
-  sendMessage: (conversationId: string, senderId: string, content: string) => Promise<void>;
+  sendMessage: (conversationId: string, senderId: string, content: string, replyToId?: string | null) => Promise<void>;
+  editMessage: (messageId: string, content: string) => Promise<void>;
+  togglePin: (messageId: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   getOrCreateConversation: (myId: string, otherId: string) => Promise<string>;
   markConversationRead: (conversationId: string, userId: string) => Promise<void>;
@@ -129,12 +141,22 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true });
 
-    if (data) set({ messages: data as DirectMessage[], activeConversationId: conversationId });
+    if (data) {
+      const list = data as DirectMessage[];
+      const byId = new Map(list.map(m => [m.id, m]));
+      const withReplies = list.map(m => {
+        if (!m.reply_to_id) return m;
+        const t = byId.get(m.reply_to_id);
+        return { ...m, reply_preview: t ? { id: t.id, content: t.content, sender_id: t.sender_id } : null };
+      });
+      set({ messages: withReplies, activeConversationId: conversationId });
+    }
   },
 
-  sendMessage: async (conversationId: string, senderId: string, content: string) => {
+  sendMessage: async (conversationId: string, senderId: string, content: string, replyToId?: string | null) => {
     // Optimistic insert for instant feedback
     const tempId = `temp-${conversationId}-${content.length}-${content.slice(0, 8)}`;
+    const replyTarget = replyToId ? get().messages.find(m => m.id === replyToId) : null;
     const optimistic: DirectMessage = {
       id: tempId,
       conversation_id: conversationId,
@@ -142,6 +164,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       content,
       is_read: false,
       created_at: new Date(Date.now()).toISOString(),
+      reply_to_id: replyToId ?? null,
+      reply_preview: replyTarget ? { id: replyTarget.id, content: replyTarget.content, sender_id: replyTarget.sender_id } : null,
       pending: true,
     };
     set(state => ({ messages: [...state.messages, optimistic] }));
@@ -150,16 +174,18 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       conversation_id: conversationId,
       sender_id: senderId,
       content,
+      reply_to_id: replyToId ?? null,
     }).select().single();
 
     if (data) {
+      const saved = { ...(data as DirectMessage), reply_preview: optimistic.reply_preview };
       set(state => ({
         messages: state.messages
-          .filter(m => m.id !== tempId && m.id !== (data as DirectMessage).id)
-          .concat(data as DirectMessage),
+          .filter(m => m.id !== tempId && m.id !== saved.id)
+          .concat(saved),
         conversations: state.conversations.map(c =>
           c.id === conversationId
-            ? { ...c, last_message: content, last_message_sender: senderId, last_message_at: (data as DirectMessage).created_at }
+            ? { ...c, last_message: content, last_message_sender: senderId, last_message_at: saved.created_at }
             : c
         ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()),
       }));
@@ -167,6 +193,24 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       // rollback on failure
       set(state => ({ messages: state.messages.filter(m => m.id !== tempId) }));
     }
+  },
+
+  editMessage: async (messageId: string, content: string) => {
+    const editedAt = new Date(Date.now()).toISOString();
+    set(state => ({
+      messages: state.messages.map(m => m.id === messageId ? { ...m, content, edited_at: editedAt } : m),
+    }));
+    await supabase.from('direct_messages').update({ content, edited_at: editedAt }).eq('id', messageId);
+  },
+
+  togglePin: async (messageId: string) => {
+    const current = get().messages.find(m => m.id === messageId);
+    if (!current) return;
+    const next = !current.is_pinned;
+    set(state => ({
+      messages: state.messages.map(m => m.id === messageId ? { ...m, is_pinned: next } : m),
+    }));
+    await supabase.from('direct_messages').update({ is_pinned: next }).eq('id', messageId);
   },
 
   deleteMessage: async (messageId: string) => {
@@ -237,12 +281,30 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             const cleaned = state.messages.filter(
               m => !(m.pending && m.content === msg.content && m.sender_id === msg.sender_id)
             );
-            return { messages: [...cleaned, msg] };
+            const target = msg.reply_to_id ? cleaned.find(m => m.id === msg.reply_to_id) : null;
+            const enriched = target
+              ? { ...msg, reply_preview: { id: target.id, content: target.content, sender_id: target.sender_id } }
+              : msg;
+            return { messages: [...cleaned, enriched] };
           });
           // auto-mark incoming as read since the thread is open
           if (msg.sender_id !== myId) {
             supabase.from('direct_messages').update({ is_read: true }).eq('id', msg.id);
           }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'direct_messages', filter: `conversation_id=eq.${conversationId}` },
+        (payload) => {
+          const upd = payload.new as DirectMessage;
+          set(state => ({
+            messages: state.messages.map(m =>
+              m.id === upd.id
+                ? { ...m, content: upd.content, edited_at: upd.edited_at, is_pinned: upd.is_pinned, is_read: upd.is_read }
+                : m
+            ),
+          }));
         }
       )
       .on(
