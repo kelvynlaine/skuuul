@@ -11,7 +11,7 @@ RETURNS TABLE (
   url TEXT
 )
 LANGUAGE sql STABLE SECURITY DEFINER AS $$
-  SELECT
+  (SELECT
     'post'::TEXT,
     p.id,
     p.title,
@@ -24,11 +24,11 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
       p.title ILIKE '%' || query || '%'
       OR to_tsvector('french', p.title || ' ' || p.content) @@ plainto_tsquery('french', query)
     )
-  LIMIT 5
+  LIMIT 5)
 
   UNION ALL
 
-  SELECT
+  (SELECT
     'course'::TEXT,
     c.id,
     c.title,
@@ -42,11 +42,11 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
       c.title ILIKE '%' || query || '%'
       OR to_tsvector('french', c.title || ' ' || COALESCE(c.description, '')) @@ plainto_tsquery('french', query)
     )
-  LIMIT 5
+  LIMIT 5)
 
   UNION ALL
 
-  SELECT
+  (SELECT
     'user'::TEXT,
     pr.id,
     COALESCE(pr.full_name, pr.username),
@@ -59,5 +59,5 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
       pr.username ILIKE '%' || query || '%'
       OR pr.full_name ILIKE '%' || query || '%'
     )
-  LIMIT 5;
+  LIMIT 5);
 $$;
