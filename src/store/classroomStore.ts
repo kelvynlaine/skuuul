@@ -14,9 +14,17 @@ export interface Course {
   profiles?: {
     full_name: string | null;
     username: string;
-    iban: string | null;
-    phone: string | null;
+    avatar_url?: string | null;
   } | null;
+}
+
+// Coordonnées de paiement du vendeur d'un cours (récupérées via RPC sécurisé,
+// jamais exposées globalement par la table profiles).
+export interface CoursePaymentInfo {
+  iban: string | null;
+  phone: string | null;
+  stripe_account_id: string | null;
+  stripe_onboarding_complete: boolean;
 }
 
 export interface CoursePurchase {
@@ -78,6 +86,7 @@ interface ClassroomState {
   uploadMedia: (file: File) => Promise<string | null>;
   fetchUserPurchases: () => Promise<void>;
   requestCoursePurchase: (courseId: string, amount: number, transferReference: string) => Promise<any>;
+  getCoursePaymentInfo: (courseId: string) => Promise<CoursePaymentInfo | null>;
   fetchPendingPurchasesForCreator: () => Promise<(CoursePurchase & { profiles: { username: string, full_name: string | null }, courses: { title: string } })[]>;
   updatePurchaseStatus: (purchaseId: string, status: 'approved' | 'rejected') => Promise<boolean>;
   cancelCoursePurchase: (courseId: string) => Promise<boolean>;
@@ -101,7 +110,7 @@ export const useClassroomStore = create<ClassroomState>((set, get) => ({
     try {
       const { data, error } = await supabase
         .from('courses')
-        .select('*, profiles:owner_id (full_name, username, iban, phone)')
+        .select('*, profiles:owner_id (full_name, username, avatar_url)')
         .order('created_at', { ascending: true });
 
       if (error) throw error;
@@ -328,6 +337,22 @@ export const useClassroomStore = create<ClassroomState>((set, get) => ({
 
   uploadMedia: async (file) => {
     try {
+      // Validation : type MIME en liste blanche + taille max, pour éviter
+      // l'upload de fichiers exécutables déguisés ou trop volumineux.
+      const ALLOWED_TYPES = [
+        'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+        'video/mp4', 'video/webm', 'audio/mpeg', 'audio/mp4', 'audio/webm',
+      ];
+      const MAX_SIZE = 100 * 1024 * 1024; // 100 Mo
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        alert("Type de fichier non autorisé. Formats acceptés : images, vidéos (mp4/webm) et audio.");
+        return null;
+      }
+      if (file.size > MAX_SIZE) {
+        alert("Fichier trop volumineux (max 100 Mo).");
+        return null;
+      }
+
       const fileExt = file.name.split('.').pop();
       const fileName = `${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
       const filePath = `uploads/${fileName}`;
@@ -369,6 +394,8 @@ export const useClassroomStore = create<ClassroomState>((set, get) => ({
     const { user } = useAuthStore.getState();
     if (!user) return null;
     try {
+      // amount et status sont imposés côté serveur (trigger enforce_purchase_integrity) :
+      // les valeurs envoyées ici ne sont pas de confiance.
       const { data, error } = await supabase
         .from('course_purchases')
         .insert({
@@ -385,6 +412,20 @@ export const useClassroomStore = create<ClassroomState>((set, get) => ({
       return data;
     } catch (e) {
       console.error("Failed to request course purchase:", e);
+      return null;
+    }
+  },
+
+  getCoursePaymentInfo: async (courseId: string) => {
+    try {
+      // RPC sécurisé : ne renvoie que les coordonnées du vendeur DU cours demandé.
+      const { data, error } = await supabase
+        .rpc('get_course_payment_info', { p_course_id: courseId })
+        .single();
+      if (error) throw error;
+      return data as CoursePaymentInfo;
+    } catch (e) {
+      console.error("Failed to fetch course payment info:", e);
       return null;
     }
   },
@@ -497,22 +538,27 @@ export const useClassroomStore = create<ClassroomState>((set, get) => ({
   },
 
   adminFetchAllPayoutRequests: async () => {
+    if (useAuthStore.getState().profile?.role !== 'admin') return [];
     try {
-      const { data, error } = await supabase
-        .from('payout_requests')
-        .select(`
-          id,
-          user_id,
-          amount,
-          iban,
-          status,
-          created_at,
-          updated_at,
-          profiles:user_id (username, full_name, stripe_account_id)
-        `)
-        .order('created_at', { ascending: false });
+      // RPC réservé aux admins : la jointure profiles(...stripe_account_id)
+      // n'est plus possible directement (colonne non accordée côté table).
+      const { data, error } = await supabase.rpc('admin_list_payout_requests');
       if (error) throw error;
-      return data as any[];
+      // Remet les champs du vendeur sous la forme { profiles: {...} } attendue par l'UI.
+      return (data ?? []).map((row: any) => ({
+        id: row.id,
+        user_id: row.user_id,
+        amount: row.amount,
+        iban: row.iban,
+        status: row.status,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        profiles: {
+          username: row.username,
+          full_name: row.full_name,
+          stripe_account_id: row.stripe_account_id,
+        },
+      })) as any[];
     } catch (e) {
       console.error("Failed to fetch all payout requests for admin:", e);
       return [];
@@ -520,6 +566,7 @@ export const useClassroomStore = create<ClassroomState>((set, get) => ({
   },
 
   adminUpdatePayoutStatus: async (payoutId: string, status: 'approved' | 'rejected') => {
+    if (useAuthStore.getState().profile?.role !== 'admin') return false;
     try {
       const { error } = await supabase
         .from('payout_requests')

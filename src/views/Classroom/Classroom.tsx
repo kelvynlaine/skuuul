@@ -76,7 +76,8 @@ export const Classroom: React.FC = () => {
     fetchProgress, 
     toggleLessonCompletion,
     fetchUserPurchases,
-    requestCoursePurchase
+    requestCoursePurchase,
+    getCoursePaymentInfo
   } = useClassroomStore();
 
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
@@ -92,6 +93,7 @@ export const Classroom: React.FC = () => {
   const [showCreateLessonModal, setShowCreateLessonModal] = useState(false);
   const [selectedModuleIdForLessonCreate, setSelectedModuleIdForLessonCreate] = useState<string | null>(null);
   const [paymentModalCourse, setPaymentModalCourse] = useState<Course | null>(null);
+  const [paymentInfo, setPaymentInfo] = useState<{ iban: string | null; phone: string | null } | null>(null);
   const [transferRefCode, setTransferRefCode] = useState('');
   const [requestingPayment, setRequestingPayment] = useState(false);
 
@@ -289,7 +291,12 @@ export const Classroom: React.FC = () => {
     
     if (isLocked) {
       setTransferRefCode('SKU-' + Math.random().toString(36).substring(2, 8).toUpperCase());
+      setPaymentInfo(null);
       setPaymentModalCourse(course);
+      // Coordonnées de paiement du vendeur récupérées via RPC sécurisé.
+      getCoursePaymentInfo(course.id).then((info) => {
+        if (info) setPaymentInfo({ iban: info.iban, phone: info.phone });
+      });
       return;
     }
 
@@ -1128,8 +1135,8 @@ export const Classroom: React.FC = () => {
       {paymentModalCourse && (() => {
         const creatorName = paymentModalCourse.profiles?.full_name || paymentModalCourse.profiles?.username || 'Créateur Skuuul';
         const priceVal = paymentModalCourse.price || 0;
-        const iban = paymentModalCourse.profiles?.iban;
-        const phone = paymentModalCourse.profiles?.phone;
+        const iban = paymentInfo?.iban;
+        const phone = paymentInfo?.phone;
         const purchase = userPurchases.find(p => p.course_id === paymentModalCourse.id);
         const isRejected = purchase?.status === 'rejected';
 

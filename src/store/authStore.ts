@@ -88,10 +88,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   fetchProfile: async (userId: string) => {
     try {
+      // get_my_profile() renvoie la ligne complète de l'appelant (colonnes
+      // sensibles incluses) sans exposer celles des autres utilisateurs.
       const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
+        .rpc('get_my_profile')
         .single();
 
       if (error) throw error;
@@ -207,13 +207,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   fetchProfilesList: async () => {
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .order('xp', { ascending: false });
-
-      if (error) throw error;
-      set({ profilesList: data as Profile[] });
+      if (get().profile?.role === 'admin') {
+        // Admin : profils COMPLETS via RPC (CRM — notes/téléphone/solde).
+        // admin_list_profiles() vérifie is_admin() côté serveur.
+        const { data, error } = await supabase.rpc('admin_list_profiles');
+        if (error) throw error;
+        set({ profilesList: (data ?? []) as Profile[] });
+      } else {
+        // Tout le monde : uniquement les colonnes publiques (leaderboard,
+        // liste d'appel, recherche de membres à inviter). Les colonnes
+        // sensibles ne sont pas accordées au niveau base.
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, role, username, full_name, avatar_url, xp, level, is_premium, is_banned, created_at, updated_at')
+          .order('xp', { ascending: false });
+        if (error) throw error;
+        set({ profilesList: (data ?? []) as Profile[] });
+      }
     } catch (e) {
       console.error("Failed to fetch profiles list from DB:", e);
       set({ profilesList: [] });
@@ -222,6 +232,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   adminUpdateUserXp: async (userId, xpAmount) => {
     const { profile } = get();
+    if (profile?.role !== 'admin') return false;
     const nextLevel = Math.floor(Math.sqrt(xpAmount / 250)) + 1;
 
     try {
@@ -244,6 +255,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   adminUpdateUserPremiumStatus: async (userId, isPremium) => {
     const { profile } = get();
+    if (profile?.role !== 'admin') return false;
 
     try {
       const { error } = await supabase
@@ -264,7 +276,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   adminToggleUserBan: async (userId) => {
-    const { profilesList } = get();
+    const { profilesList, profile } = get();
+    if (profile?.role !== 'admin') return false;
     const userToUpdate = profilesList.find(p => p.id === userId);
     if (!userToUpdate) return false;
     const nextBanStatus = !userToUpdate.is_banned;
@@ -286,6 +299,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   adminUpdateUserRole: async (userId, role) => {
     const { profile } = get();
+    if (profile?.role !== 'admin') return false;
 
     try {
       const { error } = await supabase
@@ -307,21 +321,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   adminUpdateCrmNotes: async (userId, notes) => {
     const { profile } = get();
+    if (profile?.role !== 'admin') return false;
 
     try {
+      // Passe exclusivement par le RPC qui vérifie is_admin() côté serveur.
+      // (Pas de fallback UPDATE direct : il contournerait ce contrôle.)
       const { error } = await supabase.rpc('admin_update_crm_notes', {
         target_user_id: userId,
         new_notes: notes
       });
 
-      if (error) {
-        const { error: directError } = await supabase
-          .from('profiles')
-          .update({ crm_notes: notes })
-          .eq('id', userId);
-
-        if (directError) throw directError;
-      }
+      if (error) throw error;
 
       await get().fetchProfilesList();
       if (profile && profile.id === userId) {

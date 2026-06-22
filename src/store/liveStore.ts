@@ -150,6 +150,12 @@ export const useLiveStore = create<LiveState>((set, get) => ({
     const { user } = useAuthStore.getState();
     if (!user) return null;
 
+    // Bornage du montant (cohérent avec la contrainte CHECK côté base).
+    if (!Number.isFinite(amount) || amount < 1 || amount > 10000) {
+      console.error("Donation amount out of range:", amount);
+      return null;
+    }
+
     try {
       const { data, error } = await supabase
         .from('donations')

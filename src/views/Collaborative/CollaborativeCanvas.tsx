@@ -19,6 +19,22 @@ import {
   Undo,
   Redo
 } from 'lucide-react';
+import DOMPurify from 'dompurify';
+
+// Neutralise le HTML collaboratif (contenu DB + markdown) avant toute
+// affectation via innerHTML : supprime <script>, attributs on*, URLs
+// javascript:, etc. Conserve les balises de mise en forme et le marquage
+// d'auteur (class/style/data-author) utilisés par l'éditeur.
+const sanitizeHtml = (html: string): string =>
+  DOMPurify.sanitize(html ?? '', {
+    ALLOWED_TAGS: [
+      'p', 'br', 'span', 'div', 'strong', 'em', 'u', 'b', 'i', 's',
+      'h1', 'h2', 'h3', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
+      'a', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    ],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'style', 'data-author', 'colspan', 'rowspan'],
+    ALLOW_DATA_ATTR: true,
+  });
 
 const saveSelection = (containerNode: HTMLElement) => {
   const sel = window.getSelection();
@@ -214,8 +230,15 @@ const parseMarkdown = (markdown: string): string => {
   html = html.replace(/^\s*>\s+(.*?)$/gm, '<blockquote>$1</blockquote>');
   html = html.replace(/<\/blockquote>\s*<blockquote>/g, '<br>');
 
-  // 9. Links [text](url)
-  html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  // 9. Links [text](url) — n'accepter que les schémas sûrs (http/https/mailto)
+  //    ou les chemins relatifs ; sinon afficher le texte brut (défense en plus
+  //    de la sanitisation DOMPurify).
+  html = html.replace(/\[(.*?)\]\((.*?)\)/g, (_m, text, url) => {
+    const safe = /^(https?:\/\/|mailto:|\/)/i.test(String(url).trim());
+    return safe
+      ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`
+      : text;
+  });
 
   // 10. Paragraphs wrapping
   const paragraphs = html.split(/\n\s*\n/);
@@ -307,15 +330,16 @@ export const CollaborativeCanvas: React.FC = () => {
         const newContent = activeCanvas.content || '';
         if (isPreviewMode) {
           setRawTextBeforePreview(newContent);
-          const parsedHtml = parseMarkdown(getRawEditorTextWithSpans(newContent));
+          const parsedHtml = sanitizeHtml(parseMarkdown(getRawEditorTextWithSpans(newContent)));
           if (editorRef.current.innerHTML !== parsedHtml) {
             editorRef.current.innerHTML = parsedHtml;
           }
         } else {
-          if (editorRef.current.innerHTML !== newContent) {
+          const safeContent = sanitizeHtml(newContent);
+          if (editorRef.current.innerHTML !== safeContent) {
             const isFocused = document.activeElement === editorRef.current;
             const savedSel = isFocused ? saveSelection(editorRef.current) : null;
-            editorRef.current.innerHTML = newContent;
+            editorRef.current.innerHTML = safeContent;
             if (savedSel) {
               restoreSelection(editorRef.current, savedSel);
             }
@@ -356,15 +380,16 @@ export const CollaborativeCanvas: React.FC = () => {
               const newContent = newDoc.content || '';
               if (isPreviewModeRef.current) {
                 setRawTextBeforePreview(newContent);
-                const parsedHtml = parseMarkdown(getRawEditorTextWithSpans(newContent));
+                const parsedHtml = sanitizeHtml(parseMarkdown(getRawEditorTextWithSpans(newContent)));
                 if (editorRef.current.innerHTML !== parsedHtml) {
                   editorRef.current.innerHTML = parsedHtml;
                 }
               } else {
-                if (editorRef.current.innerHTML !== newContent) {
+                const safeContent = sanitizeHtml(newContent);
+                if (editorRef.current.innerHTML !== safeContent) {
                   const isFocused = document.activeElement === editorRef.current;
                   const savedSel = isFocused ? saveSelection(editorRef.current) : null;
-                  editorRef.current.innerHTML = newContent;
+                  editorRef.current.innerHTML = safeContent;
                   if (savedSel) {
                     restoreSelection(editorRef.current, savedSel);
                   }
@@ -632,17 +657,17 @@ export const CollaborativeCanvas: React.FC = () => {
   const handleTogglePreview = () => {
     if (isPreviewMode) {
       if (editorRef.current) {
-        editorRef.current.innerHTML = rawTextBeforePreview || '';
+        editorRef.current.innerHTML = sanitizeHtml(rawTextBeforePreview || '');
       }
       setIsPreviewMode(false);
     } else {
       if (editorRef.current) {
         const currentHtml = editorRef.current.innerHTML;
         setRawTextBeforePreview(currentHtml);
-        
+
         const rawText = getRawEditorTextWithSpans(currentHtml);
-        const parsedHtml = parseMarkdown(rawText);
-        
+        const parsedHtml = sanitizeHtml(parseMarkdown(rawText));
+
         editorRef.current.innerHTML = parsedHtml;
       }
       setIsPreviewMode(true);
