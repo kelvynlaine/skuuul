@@ -71,7 +71,7 @@ export const DesktopNav: React.FC<{ items: NavItem[]; pathname: string }> = ({ i
     }`;
 
   return (
-    <div ref={containerRef} className="hidden lg:flex flex-1 min-w-0 items-center gap-0.5 overflow-hidden mx-2 relative">
+    <div ref={containerRef} className="hidden lg:flex flex-1 min-w-0 items-center gap-0.5 mx-2 relative">
       {/* Visible items */}
       {visible.map(item => {
         const Icon = item.icon;
