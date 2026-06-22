@@ -46,8 +46,8 @@ export const AdminDirectory: React.FC = () => {
   // Filter profiles based on current user's role
   const directoryMembers: AdminMember[] = profilesList
     .filter(p => {
-      if (currentProfile?.role === 'admin') return true; // Admin sees everyone
-      return p.role === 'admin' || p.role === 'creator'; // Others see admins and creators
+      if (currentProfile?.role === 'admin' || currentProfile?.role === 'creator') return true;
+      return p.role === 'admin' || p.role === 'creator';
     })
     .map(p => {
       // Add mock extra fields for display
@@ -97,18 +97,19 @@ export const AdminDirectory: React.FC = () => {
     );
 
   // Role filter chips — admins can filter everyone; others only see staff
-  const roleChips: { key: RoleFilter; label: string }[] = currentProfile?.role === 'admin'
-    ? [
-        { key: 'all', label: 'Tous' },
-        { key: 'admin', label: 'Admins' },
-        { key: 'creator', label: 'Créateurs' },
-        { key: 'user', label: 'Membres' },
-      ]
-    : [
-        { key: 'all', label: 'Tous' },
-        { key: 'admin', label: 'Admins' },
-        { key: 'creator', label: 'Créateurs' },
-      ];
+  const roleChips: { key: RoleFilter; label: string }[] =
+    currentProfile?.role === 'admin' || currentProfile?.role === 'creator'
+      ? [
+          { key: 'all', label: 'Tous' },
+          { key: 'admin', label: 'Admins' },
+          { key: 'creator', label: 'Créateurs' },
+          { key: 'user', label: 'Membres' },
+        ]
+      : [
+          { key: 'all', label: 'Tous' },
+          { key: 'admin', label: 'Admins' },
+          { key: 'creator', label: 'Créateurs' },
+        ];
 
   // Helper to map courses to admins for display
   // Let's divide courses between admins dynamically to showcase their lists
@@ -131,12 +132,12 @@ export const AdminDirectory: React.FC = () => {
           <Shield className="w-3.5 h-3.5" /> Équipe Pédagogique
         </div>
         <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-ios-blue-light to-ios-indigo-light dark:from-ios-blue-dark dark:to-ios-indigo-dark bg-clip-text text-transparent mb-2">
-          Annuaire {currentProfile?.role === 'admin' ? 'des Membres' : 'des Créateurs'}
+          Annuaire {currentProfile?.role === 'user' ? 'des Créateurs' : 'des Membres'}
         </h1>
         <p className="text-ios-label-secondaryLight dark:text-ios-label-secondaryDark text-base sm:text-lg max-w-2xl mx-auto">
-          {currentProfile?.role === 'admin' 
-            ? "Accédez à l'ensemble des membres, créateurs et administrateurs de la plateforme."
-            : "Découvrez les profils des formateurs, accédez à leurs formations dédiées et suivez leurs contenus de cours."}
+          {currentProfile?.role === 'user'
+            ? "Découvrez les profils des formateurs, accédez à leurs formations dédiées et suivez leurs contenus de cours."
+            : "Accédez à l'ensemble des membres, créateurs et administrateurs de la plateforme."}
         </p>
       </div>
 
