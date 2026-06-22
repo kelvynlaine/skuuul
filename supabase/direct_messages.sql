@@ -59,6 +59,9 @@ CREATE POLICY "Participants send messages"
 CREATE POLICY "Participants update read flag"
   ON direct_messages FOR UPDATE
   USING (is_conversation_participant(conversation_id));
+CREATE POLICY "Senders delete own messages"
+  ON direct_messages FOR DELETE
+  USING (auth.uid() = sender_id);
 
 DO $$
 BEGIN

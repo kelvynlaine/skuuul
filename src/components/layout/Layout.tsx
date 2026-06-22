@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore, Profile } from '../../store/authStore';
 import { supabase } from '../../services/supabase';
 import { useNotificationStore } from '../../store/notificationStore';
+import { useMessageStore } from '../../store/messageStore';
 import { NotificationBell } from './NotificationBell';
 import { GlobalSearch } from './GlobalSearch';
 import {
@@ -29,6 +30,8 @@ import {
 export const Layout: React.FC = () => {
   const { profile, logout, updateProfile } = useAuthStore();
   const { subscribe: subscribeNotifs, unsubscribe: unsubscribeNotifs } = useNotificationStore();
+  const { initGlobalUnread, teardownGlobalUnread, initPresence, teardownPresence } = useMessageStore();
+  const messageUnread = useMessageStore(s => s.conversations.reduce((sum, c) => sum + (c.unread_count ?? 0), 0));
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -49,8 +52,14 @@ export const Layout: React.FC = () => {
   useEffect(() => {
     if (profile?.id) {
       subscribeNotifs(profile.id);
+      initGlobalUnread(profile.id);
+      initPresence(profile.id);
     }
-    return () => unsubscribeNotifs();
+    return () => {
+      unsubscribeNotifs();
+      teardownGlobalUnread();
+      teardownPresence();
+    };
   }, [profile?.id]);
 
   // ─── GLOBAL INCOMING CALL SYSTEM ──────────────────────────────────────────
@@ -306,10 +315,15 @@ export const Layout: React.FC = () => {
             {/* Messages */}
             <Link
               to="/messages"
-              className="p-2 rounded-ios-md hover:bg-black/5 dark:hover:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark transition-colors"
+              className="relative p-2 rounded-ios-md hover:bg-black/5 dark:hover:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark transition-colors"
               title="Messages"
             >
               <MessageCircle className="w-4 h-4" />
+              {messageUnread > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-ios-red-light dark:bg-ios-red-dark text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                  {messageUnread > 9 ? '9+' : messageUnread}
+                </span>
+              )}
             </Link>
 
             {/* Dark Mode Toggle */}
@@ -552,6 +566,23 @@ export const Layout: React.FC = () => {
                 </Link>
               );
             })}
+            <Link
+              to="/messages"
+              onClick={() => setMobileMenuOpen(false)}
+              className={`flex items-center gap-3 px-4 py-3 rounded-ios-lg text-base font-semibold ${
+                location.pathname.startsWith('/messages')
+                  ? 'bg-ios-blue-light/10 dark:bg-ios-blue-dark/15 text-ios-blue-light dark:text-ios-blue-dark'
+                  : 'text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'
+              }`}
+            >
+              <MessageCircle className="w-5 h-5" />
+              <span className="flex-1">Messages</span>
+              {messageUnread > 0 && (
+                <span className="min-w-[20px] h-5 px-1.5 bg-ios-red-light dark:bg-ios-red-dark text-white text-[11px] font-bold rounded-full flex items-center justify-center">
+                  {messageUnread > 9 ? '9+' : messageUnread}
+                </span>
+              )}
+            </Link>
           </nav>
 
           {/* Mobile XP display */}
