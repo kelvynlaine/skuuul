@@ -262,34 +262,35 @@ export const Layout: React.FC = () => {
           </Link>
 
           {/* Desktop Navigation Links */}
-          <nav className="hidden md:flex space-x-1">
+          <nav className="hidden lg:flex items-center gap-0.5">
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path || 
+              const isActive = location.pathname === item.path ||
                                (item.path !== '/' && location.pathname.startsWith(item.path));
               return (
                 <Link
                   key={item.path}
                   to={item.path}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-ios-md text-sm font-medium transition-all duration-200 ${
-                    isActive 
-                      ? 'bg-ios-blue-light/10 dark:bg-ios-blue-dark/15 text-ios-blue-light dark:text-ios-blue-dark font-semibold' 
+                  title={item.label}
+                  className={`flex items-center gap-2 px-2.5 xl:px-3.5 py-2 rounded-ios-md text-sm font-medium transition-all duration-200 ${
+                    isActive
+                      ? 'bg-ios-blue-light/10 dark:bg-ios-blue-dark/15 text-ios-blue-light dark:text-ios-blue-dark font-semibold'
                       : 'text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:bg-black/5 dark:hover:bg-white/5'
                   }`}
                 >
-                  <Icon className="w-4 h-4" />
-                  {item.label}
+                  <Icon className="w-4 h-4 shrink-0" />
+                  <span className="hidden xl:inline whitespace-nowrap">{item.label}</span>
                 </Link>
               );
             })}
           </nav>
 
           {/* User Status / XP Panel & Settings */}
-          <div className="hidden md:flex items-center gap-4">
-            
+          <div className="hidden lg:flex items-center gap-1.5 xl:gap-3">
+
             {/* Gamification Indicator */}
             {profile && (
-              <div className="flex items-center gap-3 bg-black/5 dark:bg-white/5 px-3 py-1.5 rounded-ios-lg border border-black/5 dark:border-white/5">
+              <div className="hidden xl:flex items-center gap-3 bg-black/5 dark:bg-white/5 px-3 py-1.5 rounded-ios-lg border border-black/5 dark:border-white/5">
                 <div className="flex flex-col items-end">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-ios-orange-light dark:text-ios-orange-dark">
                     <Sparkles className="w-3.5 h-3.5 fill-current" />
@@ -524,7 +525,22 @@ export const Layout: React.FC = () => {
           )}
 
           {/* Mobile Menu Button */}
-          <div className="flex items-center gap-3 md:hidden">
+          <div className="flex items-center gap-2 lg:hidden">
+            {/* Messages (mobile/tablet) */}
+            <Link
+              to="/messages"
+              className="relative p-2 rounded-ios-md hover:bg-black/5 dark:hover:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark transition-colors"
+              title="Messages"
+            >
+              <MessageCircle className="w-5 h-5" />
+              {messageUnread > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-ios-red-light dark:bg-ios-red-dark text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                  {messageUnread > 9 ? '9+' : messageUnread}
+                </span>
+              )}
+            </Link>
+            {/* Notifications (mobile/tablet) */}
+            <NotificationBell />
             <button 
               onClick={toggleDarkMode}
               className="p-2 rounded-ios-md hover:bg-black/5 dark:hover:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark transition-colors"
@@ -544,7 +560,7 @@ export const Layout: React.FC = () => {
 
       {/* Mobile Drawer menu */}
       {mobileMenuOpen && (
-        <div className="fixed inset-0 top-16 z-30 md:hidden glass-panel border-t border-black/5 dark:border-white/5 animate-fade-in flex flex-col p-4 gap-4">
+        <div className="fixed inset-0 top-16 z-30 lg:hidden glass-panel border-t border-black/5 dark:border-white/5 animate-fade-in flex flex-col p-4 gap-4 overflow-y-auto">
           <nav className="flex flex-col gap-2">
             {navItems.map((item) => {
               const Icon = item.icon;
