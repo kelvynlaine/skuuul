@@ -88,3 +88,83 @@ BEGIN
     CREATE POLICY "dm-media authenticated upload" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'dm-media' AND auth.role() = 'authenticated');
   END IF;
 END $$;
+
+
+-- ════════════════════════════════════════════════════════════════════════
+-- LOT 3 — Sourdine / Archivage / Blocage  +  Transfert de message
+-- ════════════════════════════════════════════════════════════════════════
+
+-- ── Réglages par conversation et par utilisateur (sourdine / archivage) ──
+CREATE TABLE IF NOT EXISTS conversation_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  muted BOOLEAN DEFAULT false,
+  archived BOOLEAN DEFAULT false,
+  UNIQUE(user_id, conversation_id)
+);
+ALTER TABLE conversation_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "own conv settings select" ON conversation_settings;
+CREATE POLICY "own conv settings select" ON conversation_settings FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "own conv settings insert" ON conversation_settings;
+CREATE POLICY "own conv settings insert" ON conversation_settings FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "own conv settings update" ON conversation_settings;
+CREATE POLICY "own conv settings update" ON conversation_settings FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+-- ── Blocage d'utilisateurs ──
+CREATE TABLE IF NOT EXISTS blocked_users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  blocker_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  blocked_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(blocker_id, blocked_id)
+);
+ALTER TABLE blocked_users ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "blocked select" ON blocked_users;
+CREATE POLICY "blocked select" ON blocked_users FOR SELECT USING (auth.uid() = blocker_id OR auth.uid() = blocked_id);
+DROP POLICY IF EXISTS "blocked insert" ON blocked_users;
+CREATE POLICY "blocked insert" ON blocked_users FOR INSERT WITH CHECK (auth.uid() = blocker_id);
+DROP POLICY IF EXISTS "blocked delete" ON blocked_users;
+CREATE POLICY "blocked delete" ON blocked_users FOR DELETE USING (auth.uid() = blocker_id);
+
+-- ── Le trigger de notification ignore les conversations en sourdine
+--    et les expéditeurs bloqués par le destinataire ──
+CREATE OR REPLACE FUNCTION notify_on_direct_message()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_receiver UUID;
+  v_sender_username TEXT;
+BEGIN
+  SELECT CASE WHEN participant_a = NEW.sender_id THEN participant_b ELSE participant_a END
+  INTO v_receiver
+  FROM conversations WHERE id = NEW.conversation_id;
+
+  -- Sourdine : pas de notification
+  IF EXISTS (SELECT 1 FROM conversation_settings
+             WHERE user_id = v_receiver AND conversation_id = NEW.conversation_id AND muted) THEN
+    RETURN NEW;
+  END IF;
+
+  -- Le destinataire a bloqué l'expéditeur : pas de notification
+  IF EXISTS (SELECT 1 FROM blocked_users
+             WHERE blocker_id = v_receiver AND blocked_id = NEW.sender_id) THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT username INTO v_sender_username FROM profiles WHERE id = NEW.sender_id;
+
+  INSERT INTO notifications (user_id, type, title, body, link)
+  VALUES (
+    v_receiver,
+    'direct_message',
+    'Message de @' || v_sender_username,
+    COALESCE(NULLIF(LEFT(NEW.content, 80), ''),
+             CASE NEW.attachment_type WHEN 'image' THEN '📷 Photo'
+                                      WHEN 'audio' THEN '🎤 Message vocal'
+                                      WHEN 'file'  THEN '📎 Fichier'
+                                      ELSE 'Nouveau message' END),
+    '/messages'
+  );
+  RETURN NEW;
+END;
+$$;

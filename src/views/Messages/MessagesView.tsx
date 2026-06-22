@@ -4,11 +4,13 @@ import {
   MessageCircle, Send, ArrowLeft, User, Search, X, Trash2, Check, CheckCheck,
   PenSquare, Loader2, Reply, Pencil, Pin, PinOff, ChevronUp, ChevronDown,
   Smile, Paperclip, Mic, FileText, Download,
+  MoreVertical, Bell, BellOff, Archive, ArchiveRestore, Ban, Forward,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useMessageStore, Conversation, MemberResult, DirectMessage } from '../../store/messageStore';
 import { VoiceRecorder } from './VoiceRecorder';
 import { AudioPlayer } from './AudioPlayer';
+import { ForwardModal } from './ForwardModal';
 
 const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -56,6 +58,11 @@ export const MessagesView: React.FC = () => {
     editMessage,
     togglePin,
     toggleReaction,
+    forwardMessage,
+    toggleMute,
+    toggleArchive,
+    blockUser,
+    unblockUser,
     deleteMessage,
     getOrCreateConversation,
     markConversationRead,
@@ -86,6 +93,11 @@ export const MessagesView: React.FC = () => {
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  // Lot 3 state
+  const [showArchived, setShowArchived] = useState(false);
+  const [convMenuOpen, setConvMenuOpen] = useState(false);
+  const [forwardFor, setForwardFor] = useState<DirectMessage | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -239,7 +251,9 @@ export const MessagesView: React.FC = () => {
     if (e.key === 'Escape') cancelComposerExtra();
   };
 
+  const archivedCount = conversations.filter(c => c.archived).length;
   const filteredConvs = conversations.filter(c => {
+    if ((c.archived ?? false) !== showArchived) return false;
     if (!convSearch.trim() || newChatOpen) return true;
     const q = convSearch.toLowerCase();
     return (
@@ -252,6 +266,23 @@ export const MessagesView: React.FC = () => {
   const otherOnline = selected?.other_profile && onlineUsers.has(selected.other_profile.id);
   const isTyping = selected?.other_profile && typingUsers.has(selected.other_profile.id);
   const pinned = useMemo(() => messages.filter(m => m.is_pinned), [messages]);
+
+  // Live conversation (reflects store updates for mute/archive/block)
+  const liveConv = (selected && conversations.find(c => c.id === selected.id)) || selected;
+  const isBlocked = !!liveConv?.blocked;
+
+  const doForwardToConversation = async (targetConvId: string) => {
+    if (!forwardFor || !profile) return;
+    await forwardMessage(forwardFor, targetConvId, profile.id);
+    setForwardFor(null);
+  };
+  const doForwardToMember = async (member: MemberResult) => {
+    if (!forwardFor || !profile) return;
+    const convId = await getOrCreateConversation(profile.id, member.id);
+    await forwardMessage(forwardFor, convId, profile.id);
+    await fetchConversations(profile.id);
+    setForwardFor(null);
+  };
 
   const matches = useMemo(() => {
     const q = threadQuery.trim().toLowerCase();
@@ -306,6 +337,7 @@ export const MessagesView: React.FC = () => {
     <div className="flex items-center opacity-0 group-hover:opacity-100 transition shrink-0 self-center">
       <button onClick={() => setReactionPickerFor(p => p === msg.id ? null : msg.id)} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-orange-light dark:hover:text-ios-orange-dark" title="Réagir"><Smile className="w-3.5 h-3.5" /></button>
       <button onClick={() => startReply(msg)} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-blue-light dark:hover:text-ios-blue-dark" title="Répondre"><Reply className="w-3.5 h-3.5" /></button>
+      <button onClick={() => { setForwardFor(msg); setReactionPickerFor(null); }} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-blue-light dark:hover:text-ios-blue-dark" title="Transférer"><Forward className="w-3.5 h-3.5" /></button>
       <button onClick={() => togglePin(msg.id)} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-orange-light dark:hover:text-ios-orange-dark" title={msg.is_pinned ? 'Désépingler' : 'Épingler'}>{msg.is_pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}</button>
       {isMe && msg.attachment_type == null && (
         <button onClick={() => startEdit(msg)} className="p-1 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:text-ios-blue-light dark:hover:text-ios-blue-dark" title="Modifier"><Pencil className="w-3.5 h-3.5" /></button>
@@ -353,6 +385,16 @@ export const MessagesView: React.FC = () => {
           </div>
         </div>
 
+        {!newChatOpen && (archivedCount > 0 || showArchived) && (
+          <button
+            onClick={() => setShowArchived(v => !v)}
+            className={`px-4 py-2 border-b border-black/5 dark:border-white/5 flex items-center gap-2 text-xs font-semibold transition ${showArchived ? 'text-ios-blue-light dark:text-ios-blue-dark bg-ios-blue-light/5 dark:bg-ios-blue-dark/8' : 'text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:bg-black/5 dark:hover:bg-white/5'}`}
+          >
+            <Archive className="w-3.5 h-3.5" />
+            {showArchived ? 'Retour aux conversations' : `Archivées (${archivedCount})`}
+          </button>
+        )}
+
         <div className="flex-1 overflow-y-auto">
           {newChatOpen ? (
             <div className="divide-y divide-black/5 dark:divide-white/5">
@@ -386,7 +428,11 @@ export const MessagesView: React.FC = () => {
                     {renderAvatar(conv.other_profile, 'w-11 h-11', true, !!online)}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <p className={`text-sm truncate ${unread ? 'font-extrabold' : 'font-semibold'}`}>{conv.other_profile?.full_name || conv.other_profile?.username}</p>
+                        <p className={`text-sm truncate flex items-center gap-1.5 ${unread && !conv.muted ? 'font-extrabold' : 'font-semibold'}`}>
+                          <span className="truncate">{conv.other_profile?.full_name || conv.other_profile?.username}</span>
+                          {conv.muted && <BellOff className="w-3 h-3 shrink-0 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark" />}
+                          {conv.blocked && <Ban className="w-3 h-3 shrink-0 text-ios-red-light dark:text-ios-red-dark" />}
+                        </p>
                         <span className="shrink-0 text-[10px] text-ios-label-secondaryLight dark:text-ios-label-secondaryDark">{conv.last_message_at && new Date(conv.last_message_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                       <div className="flex items-center justify-between gap-2 mt-0.5">
@@ -426,6 +472,35 @@ export const MessagesView: React.FC = () => {
                 </p>
               </button>
               <button onClick={() => { setThreadSearchOpen(o => !o); setThreadQuery(''); setMatchIndex(0); }} className={`p-2 rounded-ios-lg transition shrink-0 ${threadSearchOpen ? 'bg-ios-blue-light dark:bg-ios-blue-dark text-white' : 'hover:bg-black/5 dark:hover:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'}`} title="Rechercher dans la conversation"><Search className="w-4 h-4" /></button>
+
+              {/* Conversation menu */}
+              <div className="relative shrink-0">
+                <button onClick={() => setConvMenuOpen(o => !o)} className={`p-2 rounded-ios-lg transition ${convMenuOpen ? 'bg-black/5 dark:bg-white/5' : 'hover:bg-black/5 dark:hover:bg-white/5'} text-ios-label-secondaryLight dark:text-ios-label-secondaryDark`} title="Options"><MoreVertical className="w-4 h-4" /></button>
+                {convMenuOpen && profile && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setConvMenuOpen(false)} />
+                    <div className="absolute right-0 mt-2 w-56 glass-panel border border-black/10 dark:border-white/10 rounded-ios-xl shadow-ios-strong z-50 overflow-hidden animate-fade-in p-1.5">
+                      <button onClick={() => { toggleMute(selected.id, profile.id); setConvMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-ios-lg text-sm font-semibold hover:bg-black/5 dark:hover:bg-white/5">
+                        {liveConv?.muted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+                        {liveConv?.muted ? 'Réactiver les notifications' : 'Mettre en sourdine'}
+                      </button>
+                      <button onClick={() => { toggleArchive(selected.id, profile.id); setConvMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-ios-lg text-sm font-semibold hover:bg-black/5 dark:hover:bg-white/5">
+                        {liveConv?.archived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
+                        {liveConv?.archived ? 'Désarchiver' : 'Archiver'}
+                      </button>
+                      {selected.other_profile && (
+                        <button
+                          onClick={() => { isBlocked ? unblockUser(profile.id, selected.other_profile!.id) : blockUser(profile.id, selected.other_profile!.id); setConvMenuOpen(false); }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-ios-lg text-sm font-semibold text-ios-red-light dark:text-ios-red-dark hover:bg-ios-red-light/10 dark:hover:bg-ios-red-dark/10"
+                        >
+                          <Ban className="w-4 h-4" />
+                          {isBlocked ? 'Débloquer' : 'Bloquer'}
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* In-thread search */}
@@ -563,7 +638,21 @@ export const MessagesView: React.FC = () => {
               </div>
             )}
 
-            {/* Composer */}
+            {/* Composer (or blocked banner) */}
+            {isBlocked ? (
+              <div className="p-3 border-t border-black/5 dark:border-white/5 flex items-center justify-center gap-3 text-sm">
+                <span className="flex items-center gap-2 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark">
+                  <Ban className="w-4 h-4 text-ios-red-light dark:text-ios-red-dark" />
+                  Vous avez bloqué @{selected.other_profile?.username}
+                </span>
+                <button
+                  onClick={() => profile && selected.other_profile && unblockUser(profile.id, selected.other_profile.id)}
+                  className="px-3 py-1.5 rounded-ios-lg bg-ios-blue-light/10 dark:bg-ios-blue-dark/15 text-ios-blue-light dark:text-ios-blue-dark font-semibold text-xs hover:opacity-80"
+                >
+                  Débloquer
+                </button>
+              </div>
+            ) : (
             <div className="p-2.5 md:p-3 border-t border-black/5 dark:border-white/5 flex items-end gap-2">
               {recording ? (
                 <VoiceRecorder onSend={onVoiceSend} onCancel={() => setRecording(false)} />
@@ -588,9 +677,22 @@ export const MessagesView: React.FC = () => {
                 </>
               )}
             </div>
+            )}
           </>
         )}
       </div>
+
+      {/* Forward modal */}
+      {forwardFor && profile && (
+        <ForwardModal
+          conversations={conversations}
+          myId={profile.id}
+          searchMembers={searchMembers}
+          onPickConversation={doForwardToConversation}
+          onPickMember={doForwardToMember}
+          onClose={() => setForwardFor(null)}
+        />
+      )}
 
       {/* Image lightbox */}
       {lightbox && (

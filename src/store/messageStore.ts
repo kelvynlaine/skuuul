@@ -17,6 +17,9 @@ export interface Conversation {
   unread_count?: number;
   last_message?: string;
   last_message_sender?: string | null;
+  muted?: boolean;
+  archived?: boolean;
+  blocked?: boolean;
 }
 
 export interface ReplyPreview {
@@ -78,6 +81,11 @@ interface MessageState {
   editMessage: (messageId: string, content: string) => Promise<void>;
   togglePin: (messageId: string) => Promise<void>;
   toggleReaction: (messageId: string, emoji: string, userId: string) => Promise<void>;
+  forwardMessage: (message: DirectMessage, targetConversationId: string, senderId: string) => Promise<void>;
+  toggleMute: (conversationId: string, userId: string) => Promise<void>;
+  toggleArchive: (conversationId: string, userId: string) => Promise<void>;
+  blockUser: (blockerId: string, blockedId: string) => Promise<void>;
+  unblockUser: (blockerId: string, blockedId: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   getOrCreateConversation: (myId: string, otherId: string) => Promise<string>;
   markConversationRead: (conversationId: string, userId: string) => Promise<void>;
@@ -114,6 +122,14 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
     if (error || !data) { set({ loading: false }); return; }
 
+    // Per-user settings (mute/archive) + my block list, fetched once
+    const [{ data: settingsRows }, { data: blockedRows }] = await Promise.all([
+      supabase.from('conversation_settings').select('conversation_id, muted, archived').eq('user_id', userId),
+      supabase.from('blocked_users').select('blocked_id').eq('blocker_id', userId),
+    ]);
+    const settingsMap = new Map((settingsRows ?? []).map((s: any) => [s.conversation_id, s]));
+    const blockedSet = new Set((blockedRows ?? []).map((b: any) => b.blocked_id));
+
     const enriched: Conversation[] = await Promise.all(
       data.map(async (conv) => {
         const otherId = conv.participant_a === userId ? conv.participant_b : conv.participant_a;
@@ -139,12 +155,16 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         const attLabel = lastMsg?.attachment_type === 'image' ? '📷 Photo'
           : lastMsg?.attachment_type === 'audio' ? '🎤 Message vocal'
           : lastMsg?.attachment_type === 'file' ? '📎 Fichier' : '';
+        const settings = settingsMap.get(conv.id);
         return {
           ...conv,
           other_profile: prof ?? undefined,
           last_message: lastMsg?.content || attLabel,
           last_message_sender: lastMsg?.sender_id ?? null,
           unread_count: unread ?? 0,
+          muted: settings?.muted ?? false,
+          archived: settings?.archived ?? false,
+          blocked: blockedSet.has(otherId),
         };
       })
     );
@@ -335,6 +355,64 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   deleteMessage: async (messageId: string) => {
     set(state => ({ messages: state.messages.filter(m => m.id !== messageId) }));
     await supabase.from('direct_messages').delete().eq('id', messageId);
+  },
+
+  forwardMessage: async (message, targetConversationId, senderId) => {
+    const { data } = await supabase.from('direct_messages').insert({
+      conversation_id: targetConversationId,
+      sender_id: senderId,
+      content: message.content || '',
+      attachment_url: message.attachment_url ?? null,
+      attachment_type: message.attachment_type ?? null,
+      attachment_name: message.attachment_name ?? null,
+      attachment_duration: message.attachment_duration ?? null,
+    }).select().single();
+
+    if (data) {
+      const saved = data as DirectMessage;
+      const preview = saved.content
+        || (saved.attachment_type === 'image' ? '📷 Photo' : saved.attachment_type === 'audio' ? '🎤 Message vocal' : '📎 Fichier');
+      set(state => ({
+        messages: state.activeConversationId === targetConversationId
+          ? [...state.messages, { ...saved, reactions: [] }]
+          : state.messages,
+        conversations: state.conversations.map(c =>
+          c.id === targetConversationId
+            ? { ...c, last_message: preview, last_message_sender: senderId, last_message_at: saved.created_at }
+            : c
+        ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()),
+      }));
+    }
+  },
+
+  toggleMute: async (conversationId, userId) => {
+    const conv = get().conversations.find(c => c.id === conversationId);
+    const next = !conv?.muted;
+    set(state => ({ conversations: state.conversations.map(c => c.id === conversationId ? { ...c, muted: next } : c) }));
+    await supabase.from('conversation_settings').upsert(
+      { user_id: userId, conversation_id: conversationId, muted: next, archived: conv?.archived ?? false },
+      { onConflict: 'user_id,conversation_id' }
+    );
+  },
+
+  toggleArchive: async (conversationId, userId) => {
+    const conv = get().conversations.find(c => c.id === conversationId);
+    const next = !conv?.archived;
+    set(state => ({ conversations: state.conversations.map(c => c.id === conversationId ? { ...c, archived: next } : c) }));
+    await supabase.from('conversation_settings').upsert(
+      { user_id: userId, conversation_id: conversationId, archived: next, muted: conv?.muted ?? false },
+      { onConflict: 'user_id,conversation_id' }
+    );
+  },
+
+  blockUser: async (blockerId, blockedId) => {
+    set(state => ({ conversations: state.conversations.map(c => c.other_profile?.id === blockedId ? { ...c, blocked: true } : c) }));
+    await supabase.from('blocked_users').insert({ blocker_id: blockerId, blocked_id: blockedId });
+  },
+
+  unblockUser: async (blockerId, blockedId) => {
+    set(state => ({ conversations: state.conversations.map(c => c.other_profile?.id === blockedId ? { ...c, blocked: false } : c) }));
+    await supabase.from('blocked_users').delete().eq('blocker_id', blockerId).eq('blocked_id', blockedId);
   },
 
   getOrCreateConversation: async (myId: string, otherId: string) => {
@@ -542,12 +620,16 @@ export const useMessageStore = create<MessageState>((set, get) => ({
           const msg = payload.new as DirectMessage;
           if (msg.sender_id === userId) return;
           // Only count messages in conversations the user belongs to
-          if (get().conversations.some(c => c.id === msg.conversation_id)) {
+          const conv = get().conversations.find(c => c.id === msg.conversation_id);
+          if (conv) {
             if (get().activeConversationId === msg.conversation_id) return;
+            const muted = conv.muted;
+            const preview = msg.content
+              || (msg.attachment_type === 'image' ? '📷 Photo' : msg.attachment_type === 'audio' ? '🎤 Message vocal' : msg.attachment_type === 'file' ? '📎 Fichier' : '');
             set(state => ({
               conversations: state.conversations.map(c =>
                 c.id === msg.conversation_id
-                  ? { ...c, unread_count: (c.unread_count ?? 0) + 1, last_message: msg.content, last_message_sender: msg.sender_id, last_message_at: msg.created_at }
+                  ? { ...c, unread_count: muted ? (c.unread_count ?? 0) : (c.unread_count ?? 0) + 1, last_message: preview, last_message_sender: msg.sender_id, last_message_at: msg.created_at }
                   : c
               ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()),
             }));
