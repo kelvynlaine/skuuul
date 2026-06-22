@@ -25,6 +25,13 @@ export interface ReplyPreview {
   sender_id: string;
 }
 
+export interface MessageReaction {
+  emoji: string;
+  user_id: string;
+}
+
+export type AttachmentType = 'image' | 'file' | 'audio';
+
 export interface DirectMessage {
   id: string;
   conversation_id: string;
@@ -36,6 +43,11 @@ export interface DirectMessage {
   reply_preview?: ReplyPreview | null;
   edited_at?: string | null;
   is_pinned?: boolean;
+  reactions?: MessageReaction[];
+  attachment_url?: string | null;
+  attachment_type?: AttachmentType | null;
+  attachment_name?: string | null;
+  attachment_duration?: number | null;
   pending?: boolean;
 }
 
@@ -61,8 +73,11 @@ interface MessageState {
   fetchConversations: (userId: string) => Promise<void>;
   fetchMessages: (conversationId: string) => Promise<void>;
   sendMessage: (conversationId: string, senderId: string, content: string, replyToId?: string | null) => Promise<void>;
+  sendAttachment: (conversationId: string, senderId: string, att: { url: string; type: AttachmentType; name?: string; duration?: number }, content?: string) => Promise<void>;
+  uploadDmMedia: (file: File | Blob, filename: string) => Promise<string | null>;
   editMessage: (messageId: string, content: string) => Promise<void>;
   togglePin: (messageId: string) => Promise<void>;
+  toggleReaction: (messageId: string, emoji: string, userId: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   getOrCreateConversation: (myId: string, otherId: string) => Promise<string>;
   markConversationRead: (conversationId: string, userId: string) => Promise<void>;
@@ -109,7 +124,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             .eq('id', otherId)
             .single(),
           supabase.from('direct_messages')
-            .select('content, sender_id')
+            .select('content, sender_id, attachment_type')
             .eq('conversation_id', conv.id)
             .order('created_at', { ascending: false })
             .limit(1)
@@ -121,10 +136,13 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             .neq('sender_id', userId),
         ]);
 
+        const attLabel = lastMsg?.attachment_type === 'image' ? '📷 Photo'
+          : lastMsg?.attachment_type === 'audio' ? '🎤 Message vocal'
+          : lastMsg?.attachment_type === 'file' ? '📎 Fichier' : '';
         return {
           ...conv,
           other_profile: prof ?? undefined,
-          last_message: lastMsg?.content ?? '',
+          last_message: lastMsg?.content || attLabel,
           last_message_sender: lastMsg?.sender_id ?? null,
           unread_count: unread ?? 0,
         };
@@ -144,12 +162,30 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     if (data) {
       const list = data as DirectMessage[];
       const byId = new Map(list.map(m => [m.id, m]));
-      const withReplies = list.map(m => {
-        if (!m.reply_to_id) return m;
-        const t = byId.get(m.reply_to_id);
-        return { ...m, reply_preview: t ? { id: t.id, content: t.content, sender_id: t.sender_id } : null };
-      });
-      set({ messages: withReplies, activeConversationId: conversationId });
+
+      // Fetch reactions for these messages
+      const ids = list.map(m => m.id);
+      const reactionsByMsg = new Map<string, MessageReaction[]>();
+      if (ids.length > 0) {
+        const { data: reacts } = await supabase
+          .from('message_reactions')
+          .select('message_id, emoji, user_id')
+          .in('message_id', ids);
+        (reacts ?? []).forEach((r: any) => {
+          const arr = reactionsByMsg.get(r.message_id) ?? [];
+          arr.push({ emoji: r.emoji, user_id: r.user_id });
+          reactionsByMsg.set(r.message_id, arr);
+        });
+      }
+
+      const enriched = list.map(m => ({
+        ...m,
+        reactions: reactionsByMsg.get(m.id) ?? [],
+        reply_preview: m.reply_to_id
+          ? (() => { const t = byId.get(m.reply_to_id!); return t ? { id: t.id, content: t.content, sender_id: t.sender_id } : null; })()
+          : null,
+      }));
+      set({ messages: enriched, activeConversationId: conversationId });
     }
   },
 
@@ -211,6 +247,89 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       messages: state.messages.map(m => m.id === messageId ? { ...m, is_pinned: next } : m),
     }));
     await supabase.from('direct_messages').update({ is_pinned: next }).eq('id', messageId);
+  },
+
+  toggleReaction: async (messageId: string, emoji: string, userId: string) => {
+    const msg = get().messages.find(m => m.id === messageId);
+    if (!msg) return;
+    const has = (msg.reactions ?? []).some(r => r.emoji === emoji && r.user_id === userId);
+    // optimistic
+    set(state => ({
+      messages: state.messages.map(m => {
+        if (m.id !== messageId) return m;
+        const reactions = m.reactions ?? [];
+        return {
+          ...m,
+          reactions: has
+            ? reactions.filter(r => !(r.emoji === emoji && r.user_id === userId))
+            : [...reactions, { emoji, user_id: userId }],
+        };
+      }),
+    }));
+    if (has) {
+      await supabase.from('message_reactions').delete()
+        .eq('message_id', messageId).eq('user_id', userId).eq('emoji', emoji);
+    } else {
+      await supabase.from('message_reactions').insert({ message_id: messageId, user_id: userId, emoji });
+    }
+  },
+
+  uploadDmMedia: async (file: File | Blob, filename: string) => {
+    try {
+      const ext = filename.includes('.') ? filename.split('.').pop() : 'bin';
+      const path = `uploads/${Math.random().toString(36).slice(2)}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from('dm-media').upload(path, file);
+      if (error) throw error;
+      const { data } = supabase.storage.from('dm-media').getPublicUrl(path);
+      return data.publicUrl;
+    } catch (e) {
+      console.error('DM media upload failed:', e);
+      return null;
+    }
+  },
+
+  sendAttachment: async (conversationId, senderId, att, content = '') => {
+    const tempId = `temp-att-${Date.now()}`;
+    const optimistic: DirectMessage = {
+      id: tempId,
+      conversation_id: conversationId,
+      sender_id: senderId,
+      content,
+      is_read: false,
+      created_at: new Date(Date.now()).toISOString(),
+      attachment_url: att.url,
+      attachment_type: att.type,
+      attachment_name: att.name ?? null,
+      attachment_duration: att.duration ?? null,
+      reactions: [],
+      pending: true,
+    };
+    set(state => ({ messages: [...state.messages, optimistic] }));
+
+    const { data } = await supabase.from('direct_messages').insert({
+      conversation_id: conversationId,
+      sender_id: senderId,
+      content,
+      attachment_url: att.url,
+      attachment_type: att.type,
+      attachment_name: att.name ?? null,
+      attachment_duration: att.duration ?? null,
+    }).select().single();
+
+    const preview = att.type === 'image' ? '📷 Photo' : att.type === 'audio' ? '🎤 Message vocal' : '📎 Fichier';
+    if (data) {
+      const saved = { ...(data as DirectMessage), reactions: [] };
+      set(state => ({
+        messages: state.messages.filter(m => m.id !== tempId && m.id !== saved.id).concat(saved),
+        conversations: state.conversations.map(c =>
+          c.id === conversationId
+            ? { ...c, last_message: content || preview, last_message_sender: senderId, last_message_at: saved.created_at }
+            : c
+        ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()),
+      }));
+    } else {
+      set(state => ({ messages: state.messages.filter(m => m.id !== tempId) }));
+    }
   },
 
   deleteMessage: async (messageId: string) => {
@@ -282,9 +401,11 @@ export const useMessageStore = create<MessageState>((set, get) => ({
               m => !(m.pending && m.content === msg.content && m.sender_id === msg.sender_id)
             );
             const target = msg.reply_to_id ? cleaned.find(m => m.id === msg.reply_to_id) : null;
-            const enriched = target
-              ? { ...msg, reply_preview: { id: target.id, content: target.content, sender_id: target.sender_id } }
-              : msg;
+            const enriched = {
+              ...msg,
+              reactions: [],
+              reply_preview: target ? { id: target.id, content: target.content, sender_id: target.sender_id } : null,
+            };
             return { messages: [...cleaned, enriched] };
           });
           // auto-mark incoming as read since the thread is open
@@ -313,6 +434,38 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         (payload) => {
           const old = payload.old as { id: string };
           set(state => ({ messages: state.messages.filter(m => m.id !== old.id) }));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'message_reactions' },
+        (payload) => {
+          const r = payload.new as { message_id: string; user_id: string; emoji: string };
+          set(state => {
+            if (!state.messages.some(m => m.id === r.message_id)) return state;
+            return {
+              messages: state.messages.map(m => {
+                if (m.id !== r.message_id) return m;
+                const reactions = m.reactions ?? [];
+                if (reactions.some(x => x.emoji === r.emoji && x.user_id === r.user_id)) return m;
+                return { ...m, reactions: [...reactions, { emoji: r.emoji, user_id: r.user_id }] };
+              }),
+            };
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'message_reactions' },
+        (payload) => {
+          const r = payload.old as { message_id: string; user_id: string; emoji: string };
+          set(state => ({
+            messages: state.messages.map(m =>
+              m.id === r.message_id
+                ? { ...m, reactions: (m.reactions ?? []).filter(x => !(x.emoji === r.emoji && x.user_id === r.user_id)) }
+                : m
+            ),
+          }));
         }
       )
       .on('broadcast', { event: 'typing' }, (payload) => {
