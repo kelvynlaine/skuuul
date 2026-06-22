@@ -6,6 +6,7 @@ import { useNotificationStore } from '../../store/notificationStore';
 import { useMessageStore } from '../../store/messageStore';
 import { NotificationBell } from './NotificationBell';
 import { GlobalSearch } from './GlobalSearch';
+import { DesktopNav } from './DesktopNav';
 import {
   Users,
   GraduationCap,
@@ -261,29 +262,8 @@ export const Layout: React.FC = () => {
             </span>
           </Link>
 
-          {/* Desktop Navigation Links */}
-          <nav className="hidden lg:flex items-center gap-0.5 min-w-0">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = location.pathname === item.path ||
-                               (item.path !== '/' && location.pathname.startsWith(item.path));
-              return (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  title={item.label}
-                  className={`flex items-center gap-2 px-2.5 xl:px-3.5 py-2 rounded-ios-md text-sm font-medium transition-all duration-200 ${
-                    isActive
-                      ? 'bg-ios-blue-light/10 dark:bg-ios-blue-dark/15 text-ios-blue-light dark:text-ios-blue-dark font-semibold'
-                      : 'text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:bg-black/5 dark:hover:bg-white/5'
-                  }`}
-                >
-                  <Icon className="w-4 h-4 shrink-0" />
-                  <span className="hidden xl:inline whitespace-nowrap">{item.label}</span>
-                </Link>
-              );
-            })}
-          </nav>
+          {/* Desktop Navigation Links (priority+ with overflow menu) */}
+          <DesktopNav items={navItems} pathname={location.pathname} />
 
           {/* User Status / XP Panel & Settings */}
           <div className="hidden lg:flex items-center gap-1.5 xl:gap-3 shrink-0">
