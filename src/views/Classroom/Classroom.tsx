@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useClassroomStore, Course, Lesson } from '../../store/classroomStore';
-import { 
-  Play, 
-  CheckCircle, 
-  ChevronRight, 
-  ChevronDown, 
-  Lock, 
-  Sparkles, 
+import { CreatorAnalytics } from './CreatorAnalytics';
+import {
+  Play,
+  CheckCircle,
+  ChevronRight,
+  ChevronDown,
+  Lock,
+  Sparkles,
   ArrowLeft,
   ChevronLeft,
   Tv,
@@ -15,7 +16,9 @@ import {
   Upload,
   Loader,
   X,
-  Trash2
+  Trash2,
+  BarChart2,
+  BookOpen,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -80,6 +83,7 @@ export const Classroom: React.FC = () => {
     getCoursePaymentInfo
   } = useClassroomStore();
 
+  const [classroomTab, setClassroomTab] = useState<'courses' | 'analytics'>('courses');
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
   const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({});
@@ -424,6 +428,24 @@ export const Classroom: React.FC = () => {
                 Suivez votre progression et développez vos compétences à votre rythme.
               </p>
             </div>
+
+            {/* Analytics tab toggle (creators/admins only) */}
+            {(profile?.role === 'creator' || profile?.role === 'admin') && (
+              <div className="flex gap-1 bg-black/5 dark:bg-white/5 p-1 rounded-ios-lg shrink-0">
+                <button
+                  onClick={() => setClassroomTab('courses')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-ios-md text-xs font-bold transition-colors ${classroomTab === 'courses' ? 'bg-white dark:bg-[#1c1c1e] shadow-sm text-ios-label-primaryLight dark:text-white' : 'text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'}`}
+                >
+                  <BookOpen className="w-3.5 h-3.5" /> Cours
+                </button>
+                <button
+                  onClick={() => setClassroomTab('analytics')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-ios-md text-xs font-bold transition-colors ${classroomTab === 'analytics' ? 'bg-white dark:bg-[#1c1c1e] shadow-sm text-ios-label-primaryLight dark:text-white' : 'text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'}`}
+                >
+                  <BarChart2 className="w-3.5 h-3.5" /> Analytics
+                </button>
+              </div>
+            )}
             
             {/* Creator subscription warning at page level */}
             {profile?.role === 'creator' && !hasActiveSubscription && (
@@ -439,7 +461,11 @@ export const Classroom: React.FC = () => {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {classroomTab === 'analytics' && (profile?.role === 'creator' || profile?.role === 'admin') && (
+            <CreatorAnalytics />
+          )}
+
+          {classroomTab === 'courses' && (<div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {courses.map((course) => {
               const purchase = userPurchases.find(p => p.course_id === course.id);
               const isApproved = purchase?.status === 'approved';
@@ -610,7 +636,7 @@ export const Classroom: React.FC = () => {
                 )}
               </div>
             )}
-          </div>
+          </div>)}
         </div>
       ) : (
         /* Course Detail View with video player & modular layout */

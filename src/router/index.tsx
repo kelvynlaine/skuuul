@@ -12,6 +12,8 @@ import { AdminDirectory } from '../views/Community/AdminDirectory';
 import { CollaborativeList } from '../views/Collaborative/CollaborativeList';
 import { CollaborativeCanvas } from '../views/Collaborative/CollaborativeCanvas';
 import { CollaborativeJoin } from '../views/Collaborative/CollaborativeJoin';
+import { ProfilePage } from '../views/Profile/ProfilePage';
+import { MessagesView } from '../views/Messages/MessagesView';
 
 export const router = createBrowserRouter([
   {
@@ -57,6 +59,14 @@ export const router = createBrowserRouter([
       {
         path: 'collaborative/join/:id',
         element: <CollaborativeJoin />,
+      },
+      {
+        path: 'profile/:username',
+        element: <ProfilePage />,
+      },
+      {
+        path: 'messages',
+        element: <MessagesView />,
       },
       {
         path: 'admin',

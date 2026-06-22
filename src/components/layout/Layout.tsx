@@ -2,16 +2,19 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore, Profile } from '../../store/authStore';
 import { supabase } from '../../services/supabase';
-import { 
-  Users, 
-  GraduationCap, 
-  Trophy, 
-  Shield, 
-  LogOut, 
-  Menu, 
-  X, 
-  Sparkles, 
-  Sun, 
+import { useNotificationStore } from '../../store/notificationStore';
+import { NotificationBell } from './NotificationBell';
+import { GlobalSearch } from './GlobalSearch';
+import {
+  Users,
+  GraduationCap,
+  Trophy,
+  Shield,
+  LogOut,
+  Menu,
+  X,
+  Sparkles,
+  Sun,
   Moon,
   User as UserIcon,
   Video,
@@ -19,11 +22,13 @@ import {
   Phone,
   Edit3,
   Check,
-  Radio
+  Radio,
+  MessageCircle,
 } from 'lucide-react';
 
 export const Layout: React.FC = () => {
   const { profile, logout, updateProfile } = useAuthStore();
+  const { subscribe: subscribeNotifs, unsubscribe: unsubscribeNotifs } = useNotificationStore();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -39,6 +44,14 @@ export const Layout: React.FC = () => {
   const [incomingCall, setIncomingCall] = useState<Profile | null>(null);
   const activeCallRef = useRef<any>(null);
   const ringIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Subscribe to realtime notifications
+  useEffect(() => {
+    if (profile?.id) {
+      subscribeNotifs(profile.id);
+    }
+    return () => unsubscribeNotifs();
+  }, [profile?.id]);
 
   // ─── GLOBAL INCOMING CALL SYSTEM ──────────────────────────────────────────
   const playRingSound = () => {
@@ -287,8 +300,20 @@ export const Layout: React.FC = () => {
               </div>
             )}
 
+            {/* Global Search */}
+            <GlobalSearch />
+
+            {/* Messages */}
+            <Link
+              to="/messages"
+              className="p-2 rounded-ios-md hover:bg-black/5 dark:hover:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark transition-colors"
+              title="Messages"
+            >
+              <MessageCircle className="w-4 h-4" />
+            </Link>
+
             {/* Dark Mode Toggle */}
-            <button 
+            <button
               onClick={toggleDarkMode}
               className="p-2 rounded-ios-md hover:bg-black/5 dark:hover:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark transition-colors"
               title="Changer de thème"
@@ -296,7 +321,8 @@ export const Layout: React.FC = () => {
               {darkMode ? <Sun className="w-4 h-4 text-ios-orange-dark" /> : <Moon className="w-4 h-4" />}
             </button>
 
-
+            {/* Notifications */}
+            <NotificationBell />
 
             {/* User Profile Dropdown / Logout */}
             <div className="relative">
