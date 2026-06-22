@@ -276,6 +276,8 @@ export const CollaborativeCanvas: React.FC = () => {
   const [rawTextBeforePreview, setRawTextBeforePreview] = useState('');
 
   const typingTimeoutRef = useRef<any | null>(null);
+  const isTypingRef = useRef(false);
+  const isPreviewModeRef = useRef(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
 
   // Close table picker when clicking outside
@@ -328,7 +330,11 @@ export const CollaborativeCanvas: React.FC = () => {
     }
   }, [activeCanvas, isTyping, isPreviewMode]);
 
-  // Real-time Supabase subscription
+  // Keep refs in sync so the subscription callback doesn't capture stale state
+  useEffect(() => { isTypingRef.current = isTyping; }, [isTyping]);
+  useEffect(() => { isPreviewModeRef.current = isPreviewMode; }, [isPreviewMode]);
+
+  // Real-time Supabase subscription — deps: [id] only to avoid teardown on every keystroke
   useEffect(() => {
     if (!id) return;
 
@@ -345,10 +351,10 @@ export const CollaborativeCanvas: React.FC = () => {
         (payload) => {
           const newDoc = payload.new as Canvas;
           // Only sync if local user is not actively writing to avoid cursor jumps
-          if (!isTyping) {
+          if (!isTypingRef.current) {
             if (editorRef.current) {
               const newContent = newDoc.content || '';
-              if (isPreviewMode) {
+              if (isPreviewModeRef.current) {
                 setRawTextBeforePreview(newContent);
                 const parsedHtml = parseMarkdown(getRawEditorTextWithSpans(newContent));
                 if (editorRef.current.innerHTML !== parsedHtml) {
@@ -371,17 +377,26 @@ export const CollaborativeCanvas: React.FC = () => {
             setIsItalic(newDoc.is_italic || false);
             setHighlightColor(newDoc.highlight_color || null);
           }
-          // Refresh participants and audit logs
           fetchParticipants(id);
           fetchAuditLogs(id);
         }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'canvas_participants', filter: `canvas_id=eq.${id}` },
+        () => { fetchParticipants(id); }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'canvas_audit_logs', filter: `canvas_id=eq.${id}` },
+        () => { fetchAuditLogs(id); }
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [id, isTyping, fetchParticipants, fetchAuditLogs]);
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Access rights check
   const isOwner = activeCanvas?.creator_id === user?.id;

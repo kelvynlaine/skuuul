@@ -384,18 +384,32 @@ export const LiveRooms: React.FC = () => {
           activeStream.getTracks().forEach(t => pc.addTrack(t, activeStream));
         }
 
+        // Trickle ICE: send candidates as they arrive
+        pc.onicecandidate = ({ candidate }) => {
+          if (candidate) {
+            channel.send({
+              type: 'broadcast',
+              event: 'ice-candidate',
+              payload: { viewerId, candidate, from: 'creator' }
+            });
+          }
+        };
+
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === 'connected') {
+            console.log('[Creator] Viewer connected:', viewerId);
+          } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+            creatorPCsRef.current.delete(viewerId);
+            setLiveViewerCount(c => Math.max(0, c - 1));
+          }
+        };
+
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(offer));
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
-          // Wait for ICE gathering (max 2s)
-          await new Promise<void>(resolve => {
-            if (pc.iceGatheringState === 'complete') { resolve(); return; }
-            pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve(); };
-            setTimeout(resolve, 2000);
-          });
-
+          // Send answer immediately — trickle ICE handles candidates separately
           channel.send({
             type: 'broadcast',
             event: 'creator-answer',
@@ -403,17 +417,17 @@ export const LiveRooms: React.FC = () => {
           });
 
           setLiveViewerCount(c => c + 1);
-
-          pc.onconnectionstatechange = () => {
-            if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-              creatorPCsRef.current.delete(viewerId);
-              setLiveViewerCount(c => Math.max(0, c - 1));
-            }
-          };
         } catch (e) {
           console.error('[Creator] Signaling error:', e);
           pc.close();
           creatorPCsRef.current.delete(viewerId);
+        }
+      })
+      .on('broadcast', { event: 'ice-candidate' }, ({ payload }: any) => {
+        if (payload.from !== 'viewer') return;
+        const targetPc = creatorPCsRef.current.get(payload.viewerId);
+        if (targetPc && targetPc.remoteDescription) {
+          targetPc.addIceCandidate(new RTCIceCandidate(payload.candidate)).catch(console.error);
         }
       })
       .subscribe((status: string) => {
@@ -434,7 +448,11 @@ export const LiveRooms: React.FC = () => {
   };
 
   const pushTracksToViewers = (newStream: MediaStream) => {
-    creatorPCsRef.current.forEach((pc) => {
+    creatorPCsRef.current.forEach((pc, viewerId) => {
+      if (pc.connectionState === 'closed') {
+        creatorPCsRef.current.delete(viewerId);
+        return;
+      }
       const senders = pc.getSenders();
       newStream.getTracks().forEach(newTrack => {
         const sender = senders.find(s => s.track?.kind === newTrack.kind);
@@ -469,16 +487,20 @@ export const LiveRooms: React.FC = () => {
     });
     await pc.setLocalDescription(offer);
 
-    // Wait for ICE
-    await new Promise<void>(resolve => {
-      if (pc.iceGatheringState === 'complete') { resolve(); return; }
-      pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve(); };
-      setTimeout(resolve, 2000);
-    });
-
     const channel = supabase.channel(`live-signal-${streamId}`, {
       config: { broadcast: { self: false } }
     });
+
+    // Trickle ICE: send candidates as they arrive (set up before subscribing)
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        channel.send({
+          type: 'broadcast',
+          event: 'ice-candidate',
+          payload: { viewerId: profile?.id, candidate, from: 'viewer' }
+        });
+      }
+    };
 
     channel
       .on('broadcast', { event: 'creator-answer' }, async ({ payload }: any) => {
@@ -490,9 +512,15 @@ export const LiveRooms: React.FC = () => {
           console.error('[Viewer] Error setting remote desc:', e);
         }
       })
+      .on('broadcast', { event: 'ice-candidate' }, ({ payload }: any) => {
+        if (payload.from !== 'creator') return;
+        if (pc.remoteDescription) {
+          pc.addIceCandidate(new RTCIceCandidate(payload.candidate)).catch(console.error);
+        }
+      })
       .subscribe((status: string) => {
         if (status === 'SUBSCRIBED') {
-          // Send join request with our offer
+          // Send join request with our offer (no ICE wait needed — trickle handles it)
           channel.send({
             type: 'broadcast',
             event: 'viewer-join',
@@ -990,7 +1018,8 @@ export const LiveRooms: React.FC = () => {
                   <div className="aspect-video rounded-xl bg-neutral-900 overflow-hidden relative flex items-center justify-center">
                     {/* Always mounted */}
                     <video ref={lobbyVideoRef} autoPlay playsInline muted
-                      className={`absolute inset-0 w-full h-full object-cover transition-opacity ${lobbyCamera ? 'opacity-100' : 'opacity-0'}`} />
+                      className={`absolute inset-0 w-full h-full object-cover transition-opacity ${lobbyCamera ? 'opacity-100' : 'opacity-0'}`}
+                      style={{ transform: 'scaleX(-1)' }} />
                     {!lobbyCamera && (
                       <div className="flex flex-col items-center gap-2 text-neutral-600 relative z-10">
                         <CameraOff className="w-8 h-8" />
@@ -1121,7 +1150,9 @@ export const LiveRooms: React.FC = () => {
                   </div>
                   <div onClick={() => setExpandedVideo('local')}
                     className="group relative rounded-xl overflow-hidden bg-neutral-900 border border-white/5 flex items-center justify-center min-h-[160px] cursor-pointer">
-                    <video ref={localVideoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover ${(!myCam && !isScreenSharing) ? 'opacity-0' : 'opacity-100'}`} />
+                    <video ref={localVideoRef} autoPlay playsInline muted
+                      className={`absolute inset-0 w-full h-full object-cover ${(!myCam && !isScreenSharing) ? 'opacity-0' : 'opacity-100'}`}
+                      style={{ transform: (!isScreenSharing && facingMode === 'user') ? 'scaleX(-1)' : 'none' }} />
                     {!myCam && !isScreenSharing && (
                       <div className="flex flex-col items-center gap-3 relative z-10">
                         {profile?.avatar_url ? <img src={profile.avatar_url} alt="Moi" className="w-20 h-20 rounded-full object-cover border-2 border-white/10" />
