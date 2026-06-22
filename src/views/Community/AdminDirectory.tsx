@@ -101,10 +101,10 @@ export const AdminDirectory: React.FC = () => {
         <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-ios-indigo-light/10 dark:bg-ios-indigo-dark/15 border border-ios-indigo-light/20 dark:border-ios-indigo-dark/20 text-ios-indigo-light dark:text-ios-indigo-dark text-xs font-bold mb-3 animate-pulse">
           <Shield className="w-3.5 h-3.5" /> Équipe Pédagogique
         </div>
-        <h1 className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-ios-blue-light to-ios-indigo-light dark:from-ios-blue-dark dark:to-ios-indigo-dark bg-clip-text text-transparent mb-2">
+        <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-ios-blue-light to-ios-indigo-light dark:from-ios-blue-dark dark:to-ios-indigo-dark bg-clip-text text-transparent mb-2">
           Annuaire {currentProfile?.role === 'admin' ? 'des Membres' : 'des Créateurs'}
         </h1>
-        <p className="text-ios-label-secondaryLight dark:text-ios-label-secondaryDark text-lg max-w-2xl mx-auto">
+        <p className="text-ios-label-secondaryLight dark:text-ios-label-secondaryDark text-base sm:text-lg max-w-2xl mx-auto">
           {currentProfile?.role === 'admin' 
             ? "Accédez à l'ensemble des membres, créateurs et administrateurs de la plateforme."
             : "Découvrez les profils des formateurs, accédez à leurs formations dédiées et suivez leurs contenus de cours."}
@@ -124,7 +124,7 @@ export const AdminDirectory: React.FC = () => {
       </div>
 
       {/* Grid of Admin Profiles */}
-      <div className="grid md:grid-cols-2 gap-8">
+      <div className="grid md:grid-cols-2 gap-4 md:gap-8">
         {filteredMembers.map((member) => {
           const adminCourses = getAdminCourses(member.username);
           return (

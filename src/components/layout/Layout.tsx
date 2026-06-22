@@ -668,7 +668,7 @@ export const Layout: React.FC = () => {
       )}
 
       {/* Main Content View Outlet */}
-      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-fade-in">
+      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 animate-fade-in">
         <Outlet />
       </main>
 

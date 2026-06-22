@@ -73,14 +73,14 @@ export const Auth: React.FC = () => {
       <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-ios-blue-light/15 dark:bg-ios-blue-dark/10 rounded-full filter blur-[150px] pointer-events-none"></div>
       <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-ios-indigo-light/15 dark:bg-ios-indigo-dark/10 rounded-full filter blur-[150px] pointer-events-none"></div>
 
-      <div className="w-full max-w-md glass-panel p-8 rounded-ios-xl border border-black/5 dark:border-white/5 shadow-ios-strong animate-scale-in relative z-10">
+      <div className="w-full max-w-md glass-panel p-6 sm:p-8 rounded-ios-xl border border-black/5 dark:border-white/5 shadow-ios-strong animate-scale-in relative z-10">
         
         {/* Header Icon */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-16 h-16 bg-gradient-to-tr from-ios-blue-light to-ios-indigo-light dark:from-ios-blue-dark dark:to-ios-indigo-dark rounded-ios-xl flex items-center justify-center text-white text-3xl shadow-ios-glow animate-float mb-3">
             🏫
           </div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-ios-label-primaryLight to-ios-gray-1 dark:from-white dark:to-ios-gray-3 bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-ios-label-primaryLight to-ios-gray-1 dark:from-white dark:to-ios-gray-3 bg-clip-text text-transparent">
             Skuuul
           </h1>
           <p className="text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-1 font-medium text-center">

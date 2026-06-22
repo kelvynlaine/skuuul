@@ -1404,7 +1404,7 @@ export const LiveRooms: React.FC = () => {
                     </div>
                   </div>
                 ) : (
-                  <div className="glass-panel p-10 rounded-2xl border border-black/5 dark:border-white/5 text-center space-y-4">
+                  <div className="glass-panel p-6 sm:p-10 rounded-2xl border border-black/5 dark:border-white/5 text-center space-y-4">
                     <div className="w-14 h-14 bg-red-500/10 text-red-500 rounded-xl flex items-center justify-center text-2xl mx-auto animate-pulse">📻</div>
                     <div>
                       <h3 className="font-extrabold text-base">Vous êtes hors ligne</h3>
@@ -1552,7 +1552,7 @@ export const LiveRooms: React.FC = () => {
                         </div>
                       ))}
                       {activeStreams.filter(stream => stream.creator_id !== profile?.id).length === 0 && (
-                        <div className="col-span-full glass-panel p-12 rounded-2xl border border-black/5 dark:border-white/5 text-center space-y-4">
+                        <div className="col-span-full glass-panel p-6 sm:p-12 rounded-2xl border border-black/5 dark:border-white/5 text-center space-y-4">
                           <div className="w-14 h-14 bg-black/5 dark:bg-white/5 rounded-xl flex items-center justify-center text-2xl mx-auto">📺</div>
                           <div>
                             <h3 className="font-extrabold text-base">Aucun livestream actif</h3>

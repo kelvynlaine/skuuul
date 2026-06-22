@@ -59,7 +59,7 @@ export const Leaderboard: React.FC = () => {
   ];
 
   return (
-    <div className="space-y-8 animate-fade-in max-w-4xl mx-auto">
+    <div className="space-y-6 sm:space-y-8 animate-fade-in max-w-4xl mx-auto">
 
       {/* Profile Modal */}
       {selectedProfile && (
@@ -74,9 +74,9 @@ export const Leaderboard: React.FC = () => {
       {/* Title */}
       <div className="text-center space-y-3">
         <div className="inline-flex items-center justify-center gap-2 mb-2">
-          <Trophy className="w-8 h-8 text-amber-400 animate-pulse" />
-          <h1 className="text-3xl font-extrabold tracking-tight">Classement de la Communauté</h1>
-          <Trophy className="w-8 h-8 text-amber-400 animate-pulse" />
+          <Trophy className="w-6 h-6 sm:w-8 sm:h-8 text-amber-400 animate-pulse shrink-0" />
+          <h1 className="text-xl sm:text-3xl font-extrabold tracking-tight">Classement de la Communauté</h1>
+          <Trophy className="w-6 h-6 sm:w-8 sm:h-8 text-amber-400 animate-pulse shrink-0" />
         </div>
         <p className="text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark font-medium max-w-md mx-auto">
           Les membres les plus actifs de Skuuul. Publiez, commentez et soutenez pour grimper !
@@ -200,9 +200,9 @@ export const Leaderboard: React.FC = () => {
               return (
                 <div
                   key={user.id}
-                  className={`flex items-center justify-between px-5 py-4 transition ${isSelf ? 'bg-ios-blue-light/5 dark:bg-ios-blue-dark/8 border-l-4 border-ios-blue-light dark:border-ios-blue-dark' : 'hover:bg-black/3 dark:hover:bg-white/3'}`}
+                  className={`flex items-center justify-between px-3 sm:px-5 py-3 sm:py-4 transition ${isSelf ? 'bg-ios-blue-light/5 dark:bg-ios-blue-dark/8 border-l-4 border-ios-blue-light dark:border-ios-blue-dark' : 'hover:bg-black/3 dark:hover:bg-white/3'}`}
                 >
-                  <button onClick={() => setSelectedProfile(user)} className="flex items-center gap-4 flex-1 min-w-0 text-left">
+                  <button onClick={() => setSelectedProfile(user)} className="flex items-center gap-2.5 sm:gap-4 flex-1 min-w-0 text-left">
                     {/* Rank */}
                     <span className="text-sm font-extrabold text-ios-label-secondaryLight dark:text-ios-label-secondaryDark w-7 shrink-0">
                       {rank}.
@@ -239,7 +239,7 @@ export const Leaderboard: React.FC = () => {
                   </button>
 
                   {/* Right side: stats + actions */}
-                  <div className="flex items-center gap-4 ml-4 shrink-0">
+                  <div className="flex items-center gap-2 sm:gap-4 ml-2 sm:ml-4 shrink-0">
                     <div className="text-right hidden sm:block">
                       <div className="flex items-center gap-1 text-xs font-bold text-amber-500 dark:text-amber-400 justify-end">
                         <Zap className="w-3 h-3 fill-current" /> Nv.{user.level}
@@ -269,7 +269,7 @@ export const Leaderboard: React.FC = () => {
       )}
 
       {data.length === 0 && (
-        <div className="glass-panel p-12 rounded-2xl border border-black/5 text-center">
+        <div className="glass-panel p-6 sm:p-12 rounded-2xl border border-black/5 text-center">
           <p className="text-ios-label-secondaryLight text-sm">Aucun membre trouvé.</p>
         </div>
       )}

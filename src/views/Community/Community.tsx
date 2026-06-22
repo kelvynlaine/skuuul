@@ -208,7 +208,7 @@ export const Community: React.FC = () => {
   );
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 relative">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-8 relative">
       
       {/* Floating XP Gain Badge notification */}
       {xpEarnedNotify && (
@@ -411,7 +411,7 @@ export const Community: React.FC = () => {
             <p className="text-ios-label-secondaryLight dark:text-ios-label-secondaryDark text-sm">Mise à jour du flux...</p>
           </div>
         ) : filteredPosts.length === 0 ? (
-          <div className="glass-panel border border-black/5 dark:border-white/5 rounded-ios-xl p-10 text-center shadow-ios-soft">
+          <div className="glass-panel border border-black/5 dark:border-white/5 rounded-ios-xl p-6 sm:p-10 text-center shadow-ios-soft">
             <MessageSquare className="w-12 h-12 text-ios-label-secondaryLight/40 dark:text-ios-label-secondaryDark/40 mx-auto mb-3" />
             <h4 className="font-bold text-lg">Aucun post pour le moment</h4>
             <p className="text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-1">

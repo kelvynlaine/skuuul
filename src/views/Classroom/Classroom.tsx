@@ -423,7 +423,7 @@ export const Classroom: React.FC = () => {
         <div className="space-y-6">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h1 className="text-3xl font-extrabold tracking-tight">Classroom</h1>
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Classroom</h1>
               <p className="text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-1 font-medium">
                 Suivez votre progression et développez vos compétences à votre rythme.
               </p>
@@ -465,7 +465,7 @@ export const Classroom: React.FC = () => {
             <CreatorAnalytics />
           )}
 
-          {classroomTab === 'courses' && (<div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {classroomTab === 'courses' && (<div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
             {courses.map((course) => {
               const purchase = userPurchases.find(p => p.course_id === course.id);
               const isApproved = purchase?.status === 'approved';
@@ -485,7 +485,7 @@ export const Classroom: React.FC = () => {
                   className="glass-card flex flex-col h-full overflow-hidden cursor-pointer"
                 >
                   {/* Cover image */}
-                  <div className="h-48 relative overflow-hidden bg-black/10">
+                  <div className="h-36 sm:h-48 relative overflow-hidden bg-black/10">
                     <img 
                       src={course.cover_image_url} 
                       alt={course.title} 
@@ -656,7 +656,7 @@ export const Classroom: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-8 items-start">
             
             {/* Left Column: Lesson list Accordions */}
             <div className="lg:col-span-4 flex flex-col gap-4">
@@ -847,7 +847,7 @@ export const Classroom: React.FC = () => {
 
                 </div>
               ) : (
-                <div className="glass-panel border border-black/5 dark:border-white/5 rounded-ios-xl p-16 text-center shadow-ios-soft flex flex-col items-center gap-3">
+                <div className="glass-panel border border-black/5 dark:border-white/5 rounded-ios-xl p-8 sm:p-16 text-center shadow-ios-soft flex flex-col items-center gap-3">
                   <Tv className="w-12 h-12 text-ios-label-secondaryLight/40 dark:text-ios-label-secondaryDark/40" />
                   <h4 className="font-bold text-lg">Sélectionnez une leçon</h4>
                   <p className="text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark">

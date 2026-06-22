@@ -133,7 +133,7 @@ export const CollaborativeList: React.FC = () => {
       {/* Header section */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-ios-label-primaryLight to-ios-gray-1 dark:from-white dark:to-ios-gray-3 bg-clip-text text-transparent flex items-center gap-2">
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-ios-label-primaryLight to-ios-gray-1 dark:from-white dark:to-ios-gray-3 bg-clip-text text-transparent flex items-center gap-2">
             📝 Co-working & Documents Partagés
           </h1>
           <p className="text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-1.5 font-medium">
@@ -158,7 +158,7 @@ export const CollaborativeList: React.FC = () => {
           <p className="text-ios-label-secondaryLight dark:text-ios-label-secondaryDark text-sm">Chargement des espaces de travail...</p>
         </div>
       ) : canvases.length === 0 ? (
-        <div className="glass-panel border border-black/5 dark:border-white/5 rounded-ios-2xl p-12 text-center shadow-ios-soft">
+        <div className="glass-panel border border-black/5 dark:border-white/5 rounded-ios-2xl p-6 sm:p-12 text-center shadow-ios-soft">
           <FileText className="w-14 h-14 text-ios-label-secondaryLight/30 dark:text-ios-label-secondaryDark/30 mx-auto mb-4" />
           <h3 className="font-extrabold text-lg">Aucun projet pour le moment</h3>
           <p className="text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-1.5 max-w-md mx-auto">
@@ -169,14 +169,14 @@ export const CollaborativeList: React.FC = () => {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {canvases.map((canvas) => {
             const isOwner = canvas.creator_id === profile?.id;
             return (
               <div
                 key={canvas.id}
                 onClick={() => navigate(`/collaborative/${canvas.id}`)}
-                className="glass-card p-6 flex flex-col gap-4 group cursor-pointer hover:border-ios-blue-light/30 dark:hover:border-ios-blue-dark/40 hover:shadow-ios-glow duration-300 relative transition-all"
+                className="glass-card p-4 sm:p-6 flex flex-col gap-4 group cursor-pointer hover:border-ios-blue-light/30 dark:hover:border-ios-blue-dark/40 hover:shadow-ios-glow duration-300 relative transition-all"
               >
                 <div className="flex justify-between items-start">
                   <div className="p-2.5 rounded-xl bg-ios-blue-light/10 dark:bg-ios-blue-dark/15 text-ios-blue-light dark:text-ios-blue-dark group-hover:scale-110 transition duration-300">

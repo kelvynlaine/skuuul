@@ -704,8 +704,8 @@ export const Admin: React.FC = () => {
       {/* Title Dashboard */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight flex items-center gap-2">
-            <Shield className="w-8 h-8 text-ios-blue-light dark:text-ios-blue-dark" />
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight flex items-center gap-2">
+            <Shield className="w-6 h-6 sm:w-8 sm:h-8 text-ios-blue-light dark:text-ios-blue-dark shrink-0" />
             {isCreator ? "Tableau de Bord Créateur" : "Tableau de Bord Admin"}
           </h1>
           <p className="text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-1 font-medium">
