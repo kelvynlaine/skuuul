@@ -1,18 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { useAuthStore, Profile } from '../../store/authStore';
 import { useClassroomStore, Course } from '../../store/classroomStore';
-import { 
-  Shield, 
-  Search, 
-  Mail, 
-  Sparkles, 
-  BookOpen, 
-  ChevronRight, 
-  ArrowRight, 
-  Star
+import { useMessageStore } from '../../store/messageStore';
+import {
+  Shield,
+  Search,
+  Sparkles,
+  ChevronRight,
+  ArrowRight,
+  Star,
+  MessageCircle,
+  User as UserIcon,
+  Users,
+  X,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { getCourseBadge } from '../Classroom/Classroom';
+
+type RoleFilter = 'all' | 'admin' | 'creator' | 'user';
 
 interface AdminMember extends Profile {
   email?: string;
@@ -23,12 +28,20 @@ interface AdminMember extends Profile {
 export const AdminDirectory: React.FC = () => {
   const { profilesList, fetchProfilesList, profile: currentProfile } = useAuthStore();
   const { courses, fetchCourses } = useClassroomStore();
+  const { onlineUsers } = useMessageStore();
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
 
   useEffect(() => {
     fetchProfilesList();
     fetchCourses();
   }, [fetchProfilesList, fetchCourses]);
+
+  const startConversation = (member: AdminMember) => {
+    if (member.id.startsWith('mock')) return;
+    navigate('/messages', { state: { startWith: member } });
+  };
 
   // Filter profiles based on current user's role
   const directoryMembers: AdminMember[] = profilesList
@@ -74,12 +87,28 @@ export const AdminDirectory: React.FC = () => {
     });
   }
 
-  const filteredMembers = directoryMembers.filter(member => 
-    member.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    member.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    member.specialty?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    member.role.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredMembers = directoryMembers
+    .filter(member => roleFilter === 'all' || member.role === roleFilter)
+    .filter(member =>
+      member.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      member.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      member.specialty?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      member.role.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+  // Role filter chips — admins can filter everyone; others only see staff
+  const roleChips: { key: RoleFilter; label: string }[] = currentProfile?.role === 'admin'
+    ? [
+        { key: 'all', label: 'Tous' },
+        { key: 'admin', label: 'Admins' },
+        { key: 'creator', label: 'Créateurs' },
+        { key: 'user', label: 'Membres' },
+      ]
+    : [
+        { key: 'all', label: 'Tous' },
+        { key: 'admin', label: 'Admins' },
+        { key: 'creator', label: 'Créateurs' },
+      ];
 
   // Helper to map courses to admins for display
   // Let's divide courses between admins dynamically to showcase their lists
@@ -112,16 +141,54 @@ export const AdminDirectory: React.FC = () => {
       </div>
 
       {/* Search Bar */}
-      <div className="max-w-md mx-auto mb-10 relative">
-        <input 
-          type="text" 
-          placeholder="Rechercher un membre, rôle, compétence..." 
+      <div className="max-w-md mx-auto mb-4 relative">
+        <input
+          type="text"
+          placeholder="Rechercher un membre, rôle, compétence..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-3 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/5 rounded-ios-xl text-sm focus:outline-none focus:ring-2 focus:ring-ios-blue-light backdrop-blur-md transition-all shadow-inner"
+          className="w-full pl-10 pr-9 py-3 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/5 rounded-ios-xl text-sm focus:outline-none focus:ring-2 focus:ring-ios-blue-light backdrop-blur-md transition-all shadow-inner"
         />
         <Search className="w-4 h-4 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark absolute left-3.5 top-3.5" />
+        {searchTerm && (
+          <button onClick={() => setSearchTerm('')} className="absolute right-3 top-3 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:opacity-70">
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
+
+      {/* Role filter chips */}
+      <div className="flex items-center justify-center gap-2 flex-wrap mb-3">
+        {roleChips.map(chip => (
+          <button
+            key={chip.key}
+            onClick={() => setRoleFilter(chip.key)}
+            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+              roleFilter === chip.key
+                ? 'bg-ios-blue-light dark:bg-ios-blue-dark text-white shadow-ios-glow'
+                : 'bg-black/5 dark:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:bg-black/10 dark:hover:bg-white/10'
+            }`}
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Result count */}
+      <p className="text-center text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mb-6 font-medium">
+        {filteredMembers.length} {filteredMembers.length > 1 ? 'membres trouvés' : 'membre trouvé'}
+      </p>
+
+      {/* Empty state */}
+      {filteredMembers.length === 0 && (
+        <div className="glass-panel border border-black/5 dark:border-white/5 rounded-ios-2xl p-6 sm:p-12 text-center shadow-ios-soft max-w-md mx-auto">
+          <Users className="w-12 h-12 text-ios-label-secondaryLight/30 dark:text-ios-label-secondaryDark/30 mx-auto mb-3" />
+          <h3 className="font-extrabold text-lg">Aucun membre trouvé</h3>
+          <p className="text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-1">
+            Essayez un autre terme de recherche ou changez de filtre.
+          </p>
+        </div>
+      )}
 
       {/* Grid of Admin Profiles */}
       <div className="grid md:grid-cols-2 gap-4 md:gap-8">
@@ -138,21 +205,28 @@ export const AdminDirectory: React.FC = () => {
               <div>
                 {/* Admin Header Bio */}
                 <div className="flex gap-4 items-start mb-4">
-                  {member.avatar_url ? (
-                    <img 
-                      src={member.avatar_url} 
-                      alt={member.username} 
-                      className="w-16 h-16 rounded-full object-cover border-2 border-ios-blue-light dark:border-ios-blue-dark shadow-md"
-                    />
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-ios-blue-light/10 dark:bg-ios-blue-dark/20 flex items-center justify-center text-ios-blue-light dark:text-ios-blue-dark font-extrabold text-2xl border-2 border-ios-blue-light">
-                      {member.username[0].toUpperCase()}
-                    </div>
-                  )}
-                  
+                  <Link to={`/profile/${member.username}`} className="relative shrink-0 group/avatar">
+                    {member.avatar_url ? (
+                      <img
+                        src={member.avatar_url}
+                        alt={member.username}
+                        className="w-16 h-16 rounded-full object-cover border-2 border-ios-blue-light dark:border-ios-blue-dark shadow-md group-hover/avatar:opacity-90 transition"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-full bg-ios-blue-light/10 dark:bg-ios-blue-dark/20 flex items-center justify-center text-ios-blue-light dark:text-ios-blue-dark font-extrabold text-2xl border-2 border-ios-blue-light group-hover/avatar:opacity-90 transition">
+                        {member.username[0].toUpperCase()}
+                      </div>
+                    )}
+                    {onlineUsers.has(member.id) && (
+                      <span className="absolute bottom-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-ios-green-light dark:bg-ios-green-dark border-2 border-white dark:border-ios-bg-dark" title="En ligne" />
+                    )}
+                  </Link>
+
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <h2 className="text-xl font-bold tracking-tight truncate">{member.full_name || member.username}</h2>
+                      <Link to={`/profile/${member.username}`} className="hover:text-ios-blue-light dark:hover:text-ios-blue-dark transition-colors">
+                        <h2 className="text-xl font-bold tracking-tight truncate">{member.full_name || member.username}</h2>
+                      </Link>
                       <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold ${
                         member.role === 'admin' 
                           ? 'bg-ios-blue-light/15 text-ios-blue-light dark:text-ios-blue-dark'
@@ -246,21 +320,34 @@ export const AdminDirectory: React.FC = () => {
               </div>
 
               {/* Action Buttons */}
-              <div className="border-t border-black/5 dark:border-white/5 pt-3 mt-4 flex gap-2">
-                <a 
-                  href={`mailto:${member.email}`}
-                  className="flex-1 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/10 p-2 rounded-ios-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Mail className="w-3.5 h-3.5" /> Contacter
-                </a>
-                
-                <Link
-                  to="/classroom"
-                  className="flex-1 bg-ios-blue-light dark:bg-ios-blue-dark text-white p-2 rounded-ios-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-ios-glow hover:opacity-95 transition-all"
-                >
-                  <BookOpen className="w-3.5 h-3.5" /> Classroom <ChevronRight className="w-3.5 h-3.5" />
-                </Link>
-              </div>
+              {member.id === currentProfile?.id ? (
+                <div className="border-t border-black/5 dark:border-white/5 pt-3 mt-4">
+                  <Link
+                    to={`/profile/${member.username}`}
+                    className="w-full bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/10 p-2 rounded-ios-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <UserIcon className="w-3.5 h-3.5" /> Voir mon profil
+                  </Link>
+                </div>
+              ) : (
+                <div className="border-t border-black/5 dark:border-white/5 pt-3 mt-4 flex gap-2">
+                  <button
+                    onClick={() => startConversation(member)}
+                    disabled={member.id.startsWith('mock')}
+                    className="flex-1 bg-ios-blue-light dark:bg-ios-blue-dark text-white p-2 rounded-ios-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-ios-glow hover:opacity-95 transition-all disabled:opacity-40"
+                    title={`Envoyer un message à ${member.full_name || member.username}`}
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" /> Message
+                  </button>
+
+                  <Link
+                    to={`/profile/${member.username}`}
+                    className="flex-1 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/10 p-2 rounded-ios-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <UserIcon className="w-3.5 h-3.5" /> Profil <ChevronRight className="w-3 h-3" />
+                  </Link>
+                </div>
+              )}
 
             </div>
           );
