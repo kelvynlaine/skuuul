@@ -252,7 +252,7 @@ export const Layout: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           
           {/* Logo */}
-          <Link to="/" className="flex items-center gap-2 font-bold text-2xl tracking-tight text-ios-blue-light dark:text-ios-blue-dark">
+          <Link to="/" className="flex items-center gap-2 font-bold text-2xl tracking-tight text-ios-blue-light dark:text-ios-blue-dark shrink-0">
             <span className="bg-gradient-to-r from-ios-blue-light to-ios-indigo-light dark:from-ios-blue-dark dark:to-ios-indigo-dark text-white p-1.5 rounded-ios-md shadow-ios-glow">
               🏫
             </span>
@@ -262,7 +262,7 @@ export const Layout: React.FC = () => {
           </Link>
 
           {/* Desktop Navigation Links */}
-          <nav className="hidden lg:flex items-center gap-0.5">
+          <nav className="hidden lg:flex items-center gap-0.5 min-w-0">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname === item.path ||
@@ -286,11 +286,11 @@ export const Layout: React.FC = () => {
           </nav>
 
           {/* User Status / XP Panel & Settings */}
-          <div className="hidden lg:flex items-center gap-1.5 xl:gap-3">
+          <div className="hidden lg:flex items-center gap-1.5 xl:gap-3 shrink-0">
 
             {/* Gamification Indicator */}
             {profile && (
-              <div className="hidden xl:flex items-center gap-3 bg-black/5 dark:bg-white/5 px-3 py-1.5 rounded-ios-lg border border-black/5 dark:border-white/5">
+              <div className="hidden 2xl:flex items-center gap-3 bg-black/5 dark:bg-white/5 px-3 py-1.5 rounded-ios-lg border border-black/5 dark:border-white/5">
                 <div className="flex flex-col items-end">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-ios-orange-light dark:text-ios-orange-dark">
                     <Sparkles className="w-3.5 h-3.5 fill-current" />
