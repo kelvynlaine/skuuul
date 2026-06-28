@@ -14,6 +14,7 @@ import { CollaborativeCanvas } from '../views/Collaborative/CollaborativeCanvas'
 import { CollaborativeJoin } from '../views/Collaborative/CollaborativeJoin';
 import { ProfilePage } from '../views/Profile/ProfilePage';
 import { MessagesView } from '../views/Messages/MessagesView';
+import { CalendarView } from '../views/Calendar/CalendarView';
 
 export const router = createBrowserRouter([
   {
@@ -67,6 +68,10 @@ export const router = createBrowserRouter([
       {
         path: 'messages',
         element: <MessagesView />,
+      },
+      {
+        path: 'calendrier',
+        element: <CalendarView />,
       },
       {
         path: 'admin',

@@ -29,13 +29,13 @@ ALTER TABLE direct_messages
   ADD COLUMN IF NOT EXISTS attachment_name     TEXT,
   ADD COLUMN IF NOT EXISTS attachment_duration INT;    -- secondes (audio)
 
--- Autoriser un contenu vide quand une pièce jointe est présente
+-- Autoriser un contenu vide quand une pièce jointe est présente (gestion sûre des valeurs NULL)
 ALTER TABLE direct_messages ALTER COLUMN content SET DEFAULT '';
 ALTER TABLE direct_messages DROP CONSTRAINT IF EXISTS direct_messages_content_check;
 ALTER TABLE direct_messages DROP CONSTRAINT IF EXISTS direct_messages_content_or_attachment;
 ALTER TABLE direct_messages
   ADD CONSTRAINT direct_messages_content_or_attachment
-  CHECK (length(trim(content)) >= 1 OR attachment_url IS NOT NULL);
+  CHECK (COALESCE(length(trim(content)), 0) >= 1 OR attachment_url IS NOT NULL);
 
 -- ── Réactions emoji (tapbacks) ──
 CREATE TABLE IF NOT EXISTS message_reactions (
@@ -55,22 +55,27 @@ CREATE POLICY "Participants read reactions" ON message_reactions FOR SELECT USIN
           WHERE dm.id = message_reactions.message_id
             AND is_conversation_participant(dm.conversation_id))
 );
+
 DROP POLICY IF EXISTS "Participants add own reactions" ON message_reactions;
 CREATE POLICY "Participants add own reactions" ON message_reactions FOR INSERT WITH CHECK (
   auth.uid() = user_id AND EXISTS (
     SELECT 1 FROM direct_messages dm
     WHERE dm.id = message_id AND is_conversation_participant(dm.conversation_id))
 );
+
 DROP POLICY IF EXISTS "Users remove own reactions" ON message_reactions;
 CREATE POLICY "Users remove own reactions" ON message_reactions FOR DELETE USING (auth.uid() = user_id);
 
+-- Ajout sécurisé à la publication Realtime (vérifie l'existence de la publication)
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_publication_tables
-    WHERE pubname = 'supabase_realtime' AND tablename = 'message_reactions'
-  ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE message_reactions;
+  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_publication_tables
+      WHERE pubname = 'supabase_realtime' AND tablename = 'message_reactions'
+    ) THEN
+      ALTER PUBLICATION supabase_realtime ADD TABLE message_reactions;
+    END IF;
   END IF;
 END $$;
 
@@ -86,6 +91,9 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='storage' AND tablename='objects' AND policyname='dm-media authenticated upload') THEN
     CREATE POLICY "dm-media authenticated upload" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'dm-media' AND auth.role() = 'authenticated');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='storage' AND tablename='objects' AND policyname='dm-media authenticated delete') THEN
+    CREATE POLICY "dm-media authenticated delete" ON storage.objects FOR DELETE USING (bucket_id = 'dm-media' AND auth.role() = 'authenticated');
   END IF;
 END $$;
 
@@ -104,12 +112,21 @@ CREATE TABLE IF NOT EXISTS conversation_settings (
   UNIQUE(user_id, conversation_id)
 );
 ALTER TABLE conversation_settings ENABLE ROW LEVEL SECURITY;
+
 DROP POLICY IF EXISTS "own conv settings select" ON conversation_settings;
-CREATE POLICY "own conv settings select" ON conversation_settings FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "own conv settings select" ON conversation_settings FOR SELECT USING (
+  auth.uid() = user_id AND is_conversation_participant(conversation_id)
+);
+
 DROP POLICY IF EXISTS "own conv settings insert" ON conversation_settings;
-CREATE POLICY "own conv settings insert" ON conversation_settings FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "own conv settings insert" ON conversation_settings FOR INSERT WITH CHECK (
+  auth.uid() = user_id AND is_conversation_participant(conversation_id)
+);
+
 DROP POLICY IF EXISTS "own conv settings update" ON conversation_settings;
-CREATE POLICY "own conv settings update" ON conversation_settings FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "own conv settings update" ON conversation_settings FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (
+  auth.uid() = user_id AND is_conversation_participant(conversation_id)
+);
 
 -- ── Blocage d'utilisateurs ──
 CREATE TABLE IF NOT EXISTS blocked_users (
@@ -117,15 +134,44 @@ CREATE TABLE IF NOT EXISTS blocked_users (
   blocker_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   blocked_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE(blocker_id, blocked_id)
+  UNIQUE(blocker_id, blocked_id),
+  CONSTRAINT cannot_block_self CHECK (blocker_id <> blocked_id) -- Empêche l'auto-blocage
 );
 ALTER TABLE blocked_users ENABLE ROW LEVEL SECURITY;
+
 DROP POLICY IF EXISTS "blocked select" ON blocked_users;
 CREATE POLICY "blocked select" ON blocked_users FOR SELECT USING (auth.uid() = blocker_id OR auth.uid() = blocked_id);
 DROP POLICY IF EXISTS "blocked insert" ON blocked_users;
 CREATE POLICY "blocked insert" ON blocked_users FOR INSERT WITH CHECK (auth.uid() = blocker_id);
 DROP POLICY IF EXISTS "blocked delete" ON blocked_users;
 CREATE POLICY "blocked delete" ON blocked_users FOR DELETE USING (auth.uid() = blocker_id);
+
+
+-- ── Sécurité de base de données : Empêche un utilisateur bloqué d'écrire des messages ──
+CREATE OR REPLACE FUNCTION check_blocked_on_message()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_receiver UUID;
+BEGIN
+  SELECT CASE WHEN participant_a = NEW.sender_id THEN participant_b ELSE participant_a END
+  INTO v_receiver
+  FROM conversations WHERE id = NEW.conversation_id;
+
+  -- Si le destinataire a bloqué l'expéditeur, rejeter l'insertion
+  IF EXISTS (SELECT 1 FROM blocked_users WHERE blocker_id = v_receiver AND blocked_id = NEW.sender_id) THEN
+    RAISE EXCEPTION 'Vous avez été bloqué par ce destinataire.';
+  END IF;
+  
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_check_blocked_before_insert ON direct_messages;
+CREATE TRIGGER trg_check_blocked_before_insert
+  BEFORE INSERT ON direct_messages
+  FOR EACH ROW
+  EXECUTE FUNCTION check_blocked_on_message();
+
 
 -- ── Le trigger de notification ignore les conversations en sourdine
 --    et les expéditeurs bloqués par le destinataire ──
@@ -168,3 +214,10 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- Enregistrement du trigger de notification si non présent
+DROP TRIGGER IF EXISTS trg_notify_on_dm ON direct_messages;
+CREATE TRIGGER trg_notify_on_dm
+  AFTER INSERT ON direct_messages
+  FOR EACH ROW
+  EXECUTE FUNCTION notify_on_direct_message();

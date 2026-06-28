@@ -21,6 +21,7 @@ import {
   User as UserIcon,
   Video,
   UserCheck,
+  Calendar,
   Phone,
   Edit3,
   Check,
@@ -154,6 +155,7 @@ export const Layout: React.FC = () => {
     { path: '/leaderboard', label: 'Leaderboard', icon: Trophy },
     { path: '/live', label: 'Salon Live', icon: Video },
     { path: '/collaborative', label: 'Co-working', icon: Edit3 },
+    { path: '/calendrier', label: 'Calendrier', icon: Calendar },
     { path: '/admins', label: 'Annuaire', icon: UserCheck },
   ];
 

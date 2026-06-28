@@ -13,6 +13,7 @@ import {
   User as UserIcon,
   Users,
   X,
+  Phone,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getCourseBadge } from '../Classroom/Classroom';
@@ -41,6 +42,11 @@ export const AdminDirectory: React.FC = () => {
   const startConversation = (member: AdminMember) => {
     if (member.id.startsWith('mock')) return;
     navigate('/messages', { state: { startWith: member } });
+  };
+
+  const bookCall = (member: AdminMember) => {
+    if (member.id.startsWith('mock')) return;
+    navigate('/calendrier', { state: { bookWith: member } });
   };
 
   // Filter profiles based on current user's role
@@ -331,21 +337,34 @@ export const AdminDirectory: React.FC = () => {
                   </Link>
                 </div>
               ) : (
-                <div className="border-t border-black/5 dark:border-white/5 pt-3 mt-4 flex gap-2">
-                  <button
-                    onClick={() => startConversation(member)}
-                    disabled={member.id.startsWith('mock')}
-                    className="flex-1 bg-ios-blue-light dark:bg-ios-blue-dark text-white p-2 rounded-ios-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-ios-glow hover:opacity-95 transition-all disabled:opacity-40"
-                    title={`Envoyer un message à ${member.full_name || member.username}`}
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" /> Message
-                  </button>
+                <div className="border-t border-black/5 dark:border-white/5 pt-3 mt-4 flex flex-col gap-2">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => startConversation(member)}
+                      disabled={member.id.startsWith('mock')}
+                      className="flex-1 bg-ios-blue-light dark:bg-ios-blue-dark text-white p-2 rounded-ios-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-ios-glow hover:opacity-95 transition-all disabled:opacity-40"
+                      title={`Envoyer un message à ${member.full_name || member.username}`}
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" /> Message
+                    </button>
+
+                    {(member.role === 'admin' || member.role === 'creator') && (
+                      <button
+                        onClick={() => bookCall(member)}
+                        disabled={member.id.startsWith('mock')}
+                        className="flex-1 bg-ios-green-light/15 text-ios-green-light dark:text-ios-green-dark border border-ios-green-light/20 p-2 rounded-ios-xl text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-ios-green-light/25 transition-all disabled:opacity-40"
+                        title={`Réserver un call avec ${member.full_name || member.username}`}
+                      >
+                        <Phone className="w-3.5 h-3.5" /> Réserver
+                      </button>
+                    )}
+                  </div>
 
                   <Link
                     to={`/profile/${member.username}`}
-                    className="flex-1 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/10 p-2 rounded-ios-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                    className="w-full bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 hover:bg-black/10 dark:hover:bg-white/10 p-2 rounded-ios-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
                   >
-                    <UserIcon className="w-3.5 h-3.5" /> Profil <ChevronRight className="w-3 h-3" />
+                    <UserIcon className="w-3.5 h-3.5" /> Voir le profil <ChevronRight className="w-3 h-3" />
                   </Link>
                 </div>
               )}

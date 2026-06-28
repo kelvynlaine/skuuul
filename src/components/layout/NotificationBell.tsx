@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Check, CheckCheck, MessageCircle, Heart, AtSign, ShoppingBag, Wallet, Award } from 'lucide-react';
+import { Bell, Check, CheckCheck, MessageCircle, Heart, AtSign, ShoppingBag, Wallet, Award, Phone, Calendar, CalendarClock } from 'lucide-react';
 import { useNotificationStore, Notification } from '../../store/notificationStore';
 
 const typeIcon: Record<string, React.ReactNode> = {
@@ -12,6 +12,10 @@ const typeIcon: Record<string, React.ReactNode> = {
   payout_approved:   <Wallet className="w-4 h-4 text-ios-green-light dark:text-ios-green-dark" />,
   payout_rejected:   <Wallet className="w-4 h-4 text-ios-pink-light dark:text-ios-pink-dark" />,
   badge_earned:      <Award className="w-4 h-4 text-ios-orange-light dark:text-ios-orange-dark" />,
+  appointment_request: <Phone className="w-4 h-4 text-ios-blue-light dark:text-ios-blue-dark" />,
+  appointment_update:  <Phone className="w-4 h-4 text-ios-green-light dark:text-ios-green-dark" />,
+  event_announcement:  <Calendar className="w-4 h-4 text-ios-indigo-light dark:text-ios-indigo-dark" />,
+  event_reminder:      <CalendarClock className="w-4 h-4 text-ios-orange-light dark:text-ios-orange-dark" />,
 };
 
 function timeAgo(dateStr: string): string {

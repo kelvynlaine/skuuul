@@ -1,18 +1,25 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { useCommunityStore, Post } from '../../store/communityStore';
-import { 
-  MessageSquare, 
-  ThumbsUp, 
-  Pin, 
-  Send, 
-  Plus, 
-  Search, 
-  Sparkles, 
-  Trophy, 
+import { useCalendarStore } from '../../store/calendarStore';
+import { fmtRelativeDay, fmtTime } from '../Calendar/calendarUtils';
+import {
+  MessageSquare,
+  ThumbsUp,
+  Pin,
+  Send,
+  Plus,
+  Search,
+  Sparkles,
+  Trophy,
   Trash2,
   Lock,
-  ArrowRight
+  ArrowRight,
+  Calendar as CalendarIcon,
+  Bell,
+  BellOff,
+  Clock
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -111,6 +118,8 @@ export const Community: React.FC = () => {
     castVote
   } = useCommunityStore();
 
+  const { events, fetchEvents, toggleReminder } = useCalendarStore();
+
   const [selectedCategory, setSelectedCategory] = useState('cat-all');
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -134,7 +143,13 @@ export const Community: React.FC = () => {
 
   useEffect(() => {
     fetchCategories();
-  }, [fetchCategories]);
+    fetchEvents();
+  }, [fetchCategories, fetchEvents]);
+
+  // Next upcoming event for the community announcement banner
+  const nextEvent = events
+    .filter(e => new Date(e.ends_at || e.starts_at) >= new Date())
+    .sort((a, b) => +new Date(a.starts_at) - +new Date(b.starts_at))[0];
 
   useEffect(() => {
     fetchPosts(selectedCategory);
@@ -530,7 +545,47 @@ export const Community: React.FC = () => {
 
       {/* Right Column Sidebar info & Gamification widgets */}
       <div className="lg:col-span-4 flex flex-col gap-6">
-        
+
+        {/* Next Community Event announcement banner */}
+        {nextEvent && (
+          <div className="glass-panel border border-ios-indigo-light/20 dark:border-ios-indigo-dark/20 rounded-ios-xl p-5 shadow-ios-soft flex flex-col gap-3 relative overflow-hidden animate-slide-up">
+            <div className="absolute right-[-15px] top-[-15px] w-28 h-28 bg-ios-indigo-light/10 dark:bg-ios-indigo-dark/10 rounded-full filter blur-xl pointer-events-none" />
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-1.5 text-[10px] uppercase font-extrabold tracking-widest text-ios-indigo-light dark:text-ios-indigo-dark">
+                <CalendarIcon className="w-3.5 h-3.5" /> Prochain événement
+              </span>
+              <span className="text-[10px] font-bold bg-ios-indigo-light/10 dark:bg-ios-indigo-dark/15 text-ios-indigo-light dark:text-ios-indigo-dark px-2 py-0.5 rounded-full capitalize">
+                {fmtRelativeDay(nextEvent.starts_at)}
+              </span>
+            </div>
+            <div>
+              <h3 className="font-extrabold text-base leading-tight">{nextEvent.title}</h3>
+              <p className="text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-1 flex items-center gap-1.5">
+                <Clock className="w-3 h-3" /> {fmtTime(nextEvent.starts_at)}
+                {nextEvent.creator && <span className="truncate">· par {nextEvent.creator.full_name || nextEvent.creator.username}</span>}
+              </p>
+              {nextEvent.description && (
+                <p className="text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-2 line-clamp-2">{nextEvent.description}</p>
+              )}
+            </div>
+            <div className="flex gap-2 mt-1">
+              <button
+                onClick={() => toggleReminder(nextEvent.id, !nextEvent.reminder_on)}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-ios-lg text-xs font-bold transition-all active:scale-95 ${
+                  nextEvent.reminder_on
+                    ? 'bg-ios-orange-light/15 text-ios-orange-light dark:text-ios-orange-dark'
+                    : 'bg-ios-indigo-light dark:bg-ios-indigo-dark text-white shadow-ios-glow hover:opacity-95'
+                }`}
+              >
+                {nextEvent.reminder_on ? <><Bell className="w-3.5 h-3.5 fill-current" /> Rappel activé</> : <><BellOff className="w-3.5 h-3.5" /> Me le rappeler</>}
+              </button>
+              <Link to="/calendrier" className="flex items-center justify-center gap-1 px-3 py-2 rounded-ios-lg text-xs font-bold bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 transition active:scale-95">
+                Voir <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Level Up details box */}
         <div className="glass-panel border border-black/5 dark:border-white/5 rounded-ios-xl p-6 shadow-ios-soft flex flex-col gap-4 relative overflow-hidden">
           <div className="absolute right-[-10px] top-[-10px] w-24 h-24 bg-ios-orange-light/10 dark:bg-ios-orange-dark/10 rounded-full filter blur-[10px] pointer-events-none"></div>
