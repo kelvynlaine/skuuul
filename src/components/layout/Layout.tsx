@@ -91,33 +91,72 @@ export const Layout: React.FC = () => {
 
   useEffect(() => {
     if (!profile) return;
+    let cancelled = false;
+    // Ids des appels déjà traités (présentés, refusés ou terminés) pour éviter les doublons
+    const handled = new Set<string>();
+
+    // Présente un appel entrant (dédupliqué entre realtime et polling)
+    const presentIncomingCall = async (call: any) => {
+      if (cancelled) return;
+      if (!call || call.status !== 'dialing') return;
+      if (call.receiver_id !== profile.id) return;
+      if (handled.has(call.id) || activeCallRef.current?.id === call.id) return;
+      handled.add(call.id);
+      const { data: cp } = await supabase.from('profiles').select('*').eq('id', call.caller_id).single();
+      if (cancelled || !cp) return;
+      // Si entre-temps l'appel a été annulé en base, ne rien afficher
+      const { data: fresh } = await supabase.from('calls').select('status').eq('id', call.id).single();
+      if (cancelled || !fresh || fresh.status !== 'dialing') return;
+      setIncomingCall(cp as Profile);
+      activeCallRef.current = call;
+      playRingSound();
+    };
+
+    const dismissCall = (callId: string) => {
+      handled.add(callId);
+      if (activeCallRef.current?.id === callId) {
+        setIncomingCall(null);
+        activeCallRef.current = null;
+      }
+    };
+
+    // ── 1. Realtime (voie principale) ──
     const channel = supabase
       .channel(`global-calls-recv-${profile.id}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${profile.id}` },
-        async (payload) => {
-          const call = payload.new;
-          if (call.status === 'dialing') {
-            const { data: cp } = await supabase.from('profiles').select('*').eq('id', call.caller_id).single();
-            if (cp) { 
-              setIncomingCall(cp as Profile); 
-              activeCallRef.current = call; 
-              playRingSound(); 
-            }
-          }
+        (payload) => { presentIncomingCall(payload.new); })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'calls', filter: `receiver_id=eq.${profile.id}` },
+        (payload) => {
+          const call = payload.new as any;
+          if (call.status === 'dialing') presentIncomingCall(call);
+          else if (call.status === 'rejected' || call.status === 'ended') dismissCall(call.id);
         })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'calls' },
-        async (payload) => {
-          const call = payload.new;
-          if (call.receiver_id === profile.id && activeCallRef.current?.id === call.id) {
-            if (call.status === 'rejected' || call.status === 'ended') {
-              setIncomingCall(null);
-              activeCallRef.current = null;
-            }
-          }
-        })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[calls] abonnement realtime indisponible, fallback polling actif:', status);
+        }
+      });
+
+    // ── 2. Polling de secours : capte les appels même si le realtime rate l'event ──
+    const poll = async () => {
+      if (cancelled) return;
+      const since = new Date(Date.now() - 40_000).toISOString();
+      const { data } = await supabase
+        .from('calls')
+        .select('*')
+        .eq('receiver_id', profile.id)
+        .eq('status', 'dialing')
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (data && data.length > 0) presentIncomingCall(data[0]);
+    };
+    poll();
+    const pollInterval = setInterval(poll, 3500);
 
     return () => {
+      cancelled = true;
+      clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
   }, [profile]);
