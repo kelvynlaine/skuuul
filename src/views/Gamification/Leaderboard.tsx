@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore, Profile } from '../../store/authStore';
 import { UserProfileModal } from '../../components/UserProfileModal';
-import { Trophy, Sparkles, Star, Zap, Crown, BadgeCheck, UserCircle2, Phone, RefreshCw } from 'lucide-react';
+import { Trophy, Sparkles, Star, Zap, Crown, BadgeCheck, UserCircle2, MessageCircle, RefreshCw } from 'lucide-react';
 
 const RoleBadge: React.FC<{ role: string; small?: boolean }> = ({ role, small }) => {
   const cls = small ? 'text-[9px] px-1.5 py-0.5' : 'text-[10px] px-2 py-0.5';
@@ -67,7 +67,6 @@ export const Leaderboard: React.FC = () => {
           user={selectedProfile}
           currentUserId={profile?.id}
           onClose={() => setSelectedProfile(null)}
-          onCallWebRTC={(u) => navigate('/live', { state: { dialUser: u } })}
         />
       )}
 
@@ -252,12 +251,12 @@ export const Leaderboard: React.FC = () => {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          navigate('/live', { state: { dialUser: user } });
+                          navigate('/messages', { state: { startWith: user } });
                         }}
-                        className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/15 text-emerald-500 hover:bg-emerald-500/20 transition"
-                        title={`Appeler ${user.full_name || user.username} sur Skuuul`}
+                        className="p-2 rounded-xl bg-ios-blue-light/10 border border-ios-blue-light/15 text-ios-blue-light dark:text-ios-blue-dark hover:bg-ios-blue-light/20 transition"
+                        title={`Envoyer un message à ${user.full_name || user.username}`}
                       >
-                        <Phone className="w-3.5 h-3.5" />
+                        <MessageCircle className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>

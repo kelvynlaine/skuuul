@@ -7,7 +7,6 @@ import { Community } from '../views/Community/Community';
 import { Classroom } from '../views/Classroom/Classroom';
 import { Leaderboard } from '../views/Gamification/Leaderboard';
 import { Admin } from '../views/Admin/Admin';
-import { LiveRooms } from '../views/Live/LiveRooms';
 import { AdminDirectory } from '../views/Community/AdminDirectory';
 import { CollaborativeList } from '../views/Collaborative/CollaborativeList';
 import { CollaborativeCanvas } from '../views/Collaborative/CollaborativeCanvas';
@@ -40,10 +39,6 @@ export const router = createBrowserRouter([
       {
         path: 'leaderboard',
         element: <Leaderboard />,
-      },
-      {
-        path: 'live',
-        element: <LiveRooms />,
       },
       {
         path: 'admins',

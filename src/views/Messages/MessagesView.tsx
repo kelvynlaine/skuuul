@@ -5,9 +5,11 @@ import {
   PenSquare, Loader2, Reply, Pencil, Pin, PinOff, ChevronUp, ChevronDown,
   Smile, Paperclip, Mic, FileText, Download,
   MoreVertical, Bell, BellOff, Archive, ArchiveRestore, Ban, Forward,
+  Users, UserPlus, BarChart3, Plus,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useMessageStore, Conversation, MemberResult, DirectMessage } from '../../store/messageStore';
+import { PollWidget } from '../../components/PollWidget';
 import { VoiceRecorder } from './VoiceRecorder';
 import { AudioPlayer } from './AudioPlayer';
 import { ForwardModal } from './ForwardModal';
@@ -64,6 +66,9 @@ export const MessagesView: React.FC = () => {
     blockUser,
     unblockUser,
     deleteMessage,
+    createGroup,
+    sendPoll,
+    castMessagePollVote,
     getOrCreateConversation,
     markConversationRead,
     searchMembers,
@@ -72,6 +77,8 @@ export const MessagesView: React.FC = () => {
     broadcastTyping,
     initPresence,
   } = useMessageStore();
+
+  const isHost = profile?.role === 'creator' || profile?.role === 'admin';
 
   const [selected, setSelected] = useState<Conversation | null>(null);
   const [input, setInput] = useState('');
@@ -98,6 +105,18 @@ export const MessagesView: React.FC = () => {
   const [showArchived, setShowArchived] = useState(false);
   const [convMenuOpen, setConvMenuOpen] = useState(false);
   const [forwardFor, setForwardFor] = useState<DirectMessage | null>(null);
+
+  // Groupes
+  const [groupMode, setGroupMode] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [groupMembers, setGroupMembers] = useState<MemberResult[]>([]);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+
+  // Sondages
+  const [pollOpen, setPollOpen] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+  const [sendingPoll, setSendingPoll] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -176,6 +195,7 @@ export const MessagesView: React.FC = () => {
     setConvSearch('');
     setReplyTo(null); setEditingId(null); setInput('');
     setThreadSearchOpen(false); setThreadQuery(''); setRecording(false);
+    setPollOpen(false); setPollQuestion(''); setPollOptions(['', '']);
     await fetchMessages(conv.id);
     subscribeToConversation(conv.id, profile!.id);
     if (profile) markConversationRead(conv.id, profile.id);
@@ -259,6 +279,7 @@ export const MessagesView: React.FC = () => {
     if (!convSearch.trim() || newChatOpen) return true;
     const q = convSearch.toLowerCase();
     return (
+      c.name?.toLowerCase().includes(q) ||
       c.other_profile?.username?.toLowerCase().includes(q) ||
       c.other_profile?.full_name?.toLowerCase().includes(q) ||
       c.last_message?.toLowerCase().includes(q)
@@ -305,7 +326,9 @@ export const MessagesView: React.FC = () => {
   };
 
   const senderLabel = (id: string) =>
-    id === profile?.id ? 'Vous' : (selected?.other_profile?.full_name || selected?.other_profile?.username || 'Membre');
+    id === profile?.id ? 'Vous'
+      : selected?.is_group ? groupSenderName(id)
+      : (selected?.other_profile?.full_name || selected?.other_profile?.username || 'Membre');
 
   const groupedReactions = (msg: DirectMessage) => {
     const acc: Record<string, { count: number; mine: boolean }> = {};
@@ -334,6 +357,53 @@ export const MessagesView: React.FC = () => {
       )}
     </div>
   );
+
+  // ── Helpers groupe ──
+  const convTitle = (c?: Conversation | null) =>
+    c?.is_group ? (c.name || 'Groupe') : (c?.other_profile?.full_name || c?.other_profile?.username || 'Conversation');
+
+  const renderConvAvatar = (c: Conversation, size: string, showStatus = false, online = false) => {
+    if (c.is_group) {
+      return (
+        <div className={`${size} shrink-0 rounded-full bg-gradient-to-tr from-ios-indigo-light to-ios-blue-light dark:from-ios-indigo-dark dark:to-ios-blue-dark flex items-center justify-center text-white`}>
+          <Users className="w-1/2 h-1/2" />
+        </div>
+      );
+    }
+    return renderAvatar(c.other_profile, size, showStatus, online);
+  };
+
+  const groupSenderName = (senderId: string): string => {
+    if (senderId === profile?.id) return 'Vous';
+    const m = selected?.members?.find(x => x.id === senderId);
+    return m?.full_name || m?.username || 'Membre';
+  };
+
+  const toggleGroupMember = (m: MemberResult) => {
+    setGroupMembers(prev => prev.some(x => x.id === m.id) ? prev.filter(x => x.id !== m.id) : [...prev, m]);
+  };
+
+  const handleCreateGroup = async () => {
+    if (!profile || !groupName.trim() || groupMembers.length < 1 || creatingGroup) return;
+    setCreatingGroup(true);
+    const convId = await createGroup(groupName.trim(), groupMembers.map(m => m.id), profile.id);
+    setCreatingGroup(false);
+    if (convId) {
+      setGroupMode(false); setGroupName(''); setGroupMembers([]); setNewChatOpen(false); setConvSearch('');
+      const conv = useMessageStore.getState().conversations.find(c => c.id === convId);
+      if (conv) openConversation(conv);
+    }
+  };
+
+  const handleSendPoll = async () => {
+    if (!selected || !profile) return;
+    const opts = pollOptions.map(o => o.trim()).filter(Boolean);
+    if (!pollQuestion.trim() || opts.length < 2 || sendingPoll) return;
+    setSendingPoll(true);
+    await sendPoll(selected.id, profile.id, pollQuestion.trim(), opts);
+    setSendingPoll(false);
+    setPollOpen(false); setPollQuestion(''); setPollOptions(['', '']);
+  };
 
   const ActionToolbar: React.FC<{ msg: DirectMessage; isMe: boolean }> = ({ msg, isMe }) => (
     <div className="flex items-center opacity-0 group-hover:opacity-100 transition shrink-0 self-center">
@@ -399,20 +469,68 @@ export const MessagesView: React.FC = () => {
 
         <div className="flex-1 overflow-y-auto">
           {newChatOpen ? (
-            <div className="divide-y divide-black/5 dark:divide-white/5">
-              {searchingMembers && (<div className="py-6 text-center"><Loader2 className="w-5 h-5 mx-auto animate-spin text-ios-blue-light dark:text-ios-blue-dark" /></div>)}
-              {!searchingMembers && convSearch.trim().length >= 1 && memberResults.length === 0 && (<p className="py-6 text-center text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark">Aucun membre trouvé</p>)}
-              {!searchingMembers && convSearch.trim().length < 1 && (<p className="py-6 px-4 text-center text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark">Tapez un nom ou @username pour démarrer une conversation</p>)}
-              {memberResults.map(m => (
-                <button key={m.id} onClick={() => startConversationWith(m)} className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                  {renderAvatar(m, 'w-10 h-10', true, onlineUsers.has(m.id))}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold truncate">{m.full_name || m.username}</p>
-                    <p className="text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark truncate">@{m.username}</p>
-                  </div>
-                  <Send className="w-4 h-4 text-ios-blue-light dark:text-ios-blue-dark opacity-60" />
-                </button>
-              ))}
+            <div>
+              {/* Bascule 1:1 / Groupe (créateurs & admins) */}
+              {isHost && (
+                <div className="flex gap-1 p-2 border-b border-black/5 dark:border-white/5">
+                  <button onClick={() => setGroupMode(false)} className={`flex-1 py-1.5 rounded-ios-lg text-xs font-bold flex items-center justify-center gap-1.5 transition ${!groupMode ? 'bg-ios-blue-light dark:bg-ios-blue-dark text-white' : 'bg-black/5 dark:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'}`}>
+                    <User className="w-3.5 h-3.5" /> Privé
+                  </button>
+                  <button onClick={() => setGroupMode(true)} className={`flex-1 py-1.5 rounded-ios-lg text-xs font-bold flex items-center justify-center gap-1.5 transition ${groupMode ? 'bg-ios-indigo-light dark:bg-ios-indigo-dark text-white' : 'bg-black/5 dark:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'}`}>
+                    <Users className="w-3.5 h-3.5" /> Groupe
+                  </button>
+                </div>
+              )}
+
+              {/* Création de groupe */}
+              {isHost && groupMode && (
+                <div className="p-3 border-b border-black/5 dark:border-white/5 space-y-2">
+                  <input
+                    value={groupName}
+                    onChange={e => setGroupName(e.target.value)}
+                    placeholder="Nom du groupe"
+                    className="w-full bg-black/5 dark:bg-white/5 rounded-ios-lg px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-ios-indigo-light"
+                  />
+                  {groupMembers.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {groupMembers.map(m => (
+                        <span key={m.id} className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-ios-indigo-light/15 text-ios-indigo-light dark:text-ios-indigo-dark text-[11px] font-bold">
+                          {m.full_name || m.username}
+                          <button onClick={() => toggleGroupMember(m)} className="hover:opacity-70"><X className="w-3 h-3" /></button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    onClick={handleCreateGroup}
+                    disabled={!groupName.trim() || groupMembers.length < 1 || creatingGroup}
+                    className="w-full py-2 rounded-ios-lg bg-ios-indigo-light dark:bg-ios-indigo-dark text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-40 hover:opacity-95 transition"
+                  >
+                    {creatingGroup ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Plus className="w-4 h-4" /> Créer le groupe ({groupMembers.length})</>}
+                  </button>
+                </div>
+              )}
+
+              <div className="divide-y divide-black/5 dark:divide-white/5">
+                {searchingMembers && (<div className="py-6 text-center"><Loader2 className="w-5 h-5 mx-auto animate-spin text-ios-blue-light dark:text-ios-blue-dark" /></div>)}
+                {!searchingMembers && convSearch.trim().length >= 1 && memberResults.length === 0 && (<p className="py-6 text-center text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark">Aucun membre trouvé</p>)}
+                {!searchingMembers && convSearch.trim().length < 1 && (<p className="py-6 px-4 text-center text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark">{groupMode ? 'Recherchez des membres à ajouter au groupe' : 'Tapez un nom ou @username pour démarrer une conversation'}</p>)}
+                {memberResults.map(m => {
+                  const picked = groupMembers.some(x => x.id === m.id);
+                  return (
+                    <button key={m.id} onClick={() => groupMode ? toggleGroupMember(m) : startConversationWith(m)} className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                      {renderAvatar(m, 'w-10 h-10', true, onlineUsers.has(m.id))}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold truncate">{m.full_name || m.username}</p>
+                        <p className="text-xs text-ios-label-secondaryLight dark:text-ios-label-secondaryDark truncate">@{m.username}</p>
+                      </div>
+                      {groupMode
+                        ? (picked ? <Check className="w-4 h-4 text-ios-indigo-light dark:text-ios-indigo-dark" /> : <UserPlus className="w-4 h-4 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark opacity-60" />)
+                        : <Send className="w-4 h-4 text-ios-blue-light dark:text-ios-blue-dark opacity-60" />}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           ) : filteredConvs.length === 0 ? (
             <div className="py-10 text-center px-4">
@@ -427,11 +545,12 @@ export const MessagesView: React.FC = () => {
                 const unread = (conv.unread_count ?? 0) > 0;
                 return (
                   <button key={conv.id} onClick={() => openConversation(conv)} className={`w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors ${selected?.id === conv.id ? 'bg-ios-blue-light/5 dark:bg-ios-blue-dark/8' : ''}`}>
-                    {renderAvatar(conv.other_profile, 'w-11 h-11', true, !!online)}
+                    {renderConvAvatar(conv, 'w-11 h-11', !conv.is_group, !!online)}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
                         <p className={`text-sm truncate flex items-center gap-1.5 ${unread && !conv.muted ? 'font-extrabold' : 'font-semibold'}`}>
-                          <span className="truncate">{conv.other_profile?.full_name || conv.other_profile?.username}</span>
+                          {conv.is_group && <Users className="w-3 h-3 shrink-0 text-ios-indigo-light dark:text-ios-indigo-dark" />}
+                          <span className="truncate">{convTitle(conv)}</span>
                           {conv.muted && <BellOff className="w-3 h-3 shrink-0 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark" />}
                           {conv.blocked && <Ban className="w-3 h-3 shrink-0 text-ios-red-light dark:text-ios-red-dark" />}
                         </p>
@@ -464,15 +583,25 @@ export const MessagesView: React.FC = () => {
             {/* Thread header */}
             <div className="px-3 md:px-4 py-3 border-b border-black/5 dark:border-white/5 flex items-center gap-3">
               <button onClick={() => { setSelected(null); unsubscribeFromConversation(); resetThreadExtras(); }} className="md:hidden p-1 -ml-1"><ArrowLeft className="w-5 h-5" /></button>
-              {renderAvatar(selected.other_profile, 'w-9 h-9', true, !!otherOnline)}
-              <button onClick={() => navigate(`/profile/${selected.other_profile?.username}`)} className="flex-1 min-w-0 text-left">
-                <p className="font-bold text-sm truncate">{selected.other_profile?.full_name || selected.other_profile?.username}</p>
-                <p className="text-[11px] text-ios-label-secondaryLight dark:text-ios-label-secondaryDark">
-                  {isTyping ? <span className="text-ios-blue-light dark:text-ios-blue-dark font-medium">en train d'écrire…</span>
-                    : otherOnline ? <span className="text-ios-green-light dark:text-ios-green-dark font-medium">en ligne</span>
-                    : `@${selected.other_profile?.username}`}
-                </p>
-              </button>
+              {renderConvAvatar(selected, 'w-9 h-9', !selected.is_group, !!otherOnline)}
+              {selected.is_group ? (
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-sm truncate flex items-center gap-1.5"><Users className="w-3.5 h-3.5 text-ios-indigo-light dark:text-ios-indigo-dark shrink-0" /> {convTitle(selected)}</p>
+                  <p className="text-[11px] text-ios-label-secondaryLight dark:text-ios-label-secondaryDark truncate">
+                    {(selected.members?.length ?? 0)} membre{(selected.members?.length ?? 0) > 1 ? 's' : ''}
+                    {selected.members && selected.members.length > 0 ? ' · ' + selected.members.map(m => m.full_name || m.username).slice(0, 3).join(', ') : ''}
+                  </p>
+                </div>
+              ) : (
+                <button onClick={() => navigate(`/profile/${selected.other_profile?.username}`)} className="flex-1 min-w-0 text-left">
+                  <p className="font-bold text-sm truncate">{selected.other_profile?.full_name || selected.other_profile?.username}</p>
+                  <p className="text-[11px] text-ios-label-secondaryLight dark:text-ios-label-secondaryDark">
+                    {isTyping ? <span className="text-ios-blue-light dark:text-ios-blue-dark font-medium">en train d'écrire…</span>
+                      : otherOnline ? <span className="text-ios-green-light dark:text-ios-green-dark font-medium">en ligne</span>
+                      : `@${selected.other_profile?.username}`}
+                  </p>
+                </button>
+              )}
               <button onClick={() => { setThreadSearchOpen(o => !o); setThreadQuery(''); setMatchIndex(0); }} className={`p-2 rounded-ios-lg transition shrink-0 ${threadSearchOpen ? 'bg-ios-blue-light dark:bg-ios-blue-dark text-white' : 'hover:bg-black/5 dark:hover:bg-white/5 text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'}`} title="Rechercher dans la conversation"><Search className="w-4 h-4" /></button>
 
               {/* Conversation menu */}
@@ -532,9 +661,9 @@ export const MessagesView: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-1">
               {messages.length === 0 && (
                 <div className="h-full flex flex-col items-center justify-center text-center">
-                  {renderAvatar(selected.other_profile, 'w-16 h-16')}
-                  <p className="font-bold mt-3">{selected.other_profile?.full_name || selected.other_profile?.username}</p>
-                  <p className="text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-1">Dites bonjour 👋</p>
+                  {renderConvAvatar(selected, 'w-16 h-16')}
+                  <p className="font-bold mt-3">{convTitle(selected)}</p>
+                  <p className="text-sm text-ios-label-secondaryLight dark:text-ios-label-secondaryDark mt-1">{selected.is_group ? 'Lancez la discussion du groupe 👋' : 'Dites bonjour 👋'}</p>
                 </div>
               )}
               {messages.map((msg, i) => {
@@ -562,6 +691,9 @@ export const MessagesView: React.FC = () => {
                       {isMe && <ActionToolbar msg={msg} isMe={isMe} />}
 
                       <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-[80%] md:max-w-[70%]`}>
+                        {!isMe && selected.is_group && !grouped && (
+                          <span className="text-[10px] font-bold text-ios-indigo-light dark:text-ios-indigo-dark mb-0.5 px-1">{groupSenderName(msg.sender_id)}</span>
+                        )}
                         <div className={`relative px-3 py-2 text-sm ${
                           isMe ? `bg-ios-blue-light dark:bg-ios-blue-dark text-white rounded-2xl ${grouped ? 'rounded-tr-md' : ''} rounded-br-md`
                                : `bg-black/5 dark:bg-white/10 rounded-2xl ${grouped ? 'rounded-tl-md' : ''} rounded-bl-md`
@@ -590,7 +722,14 @@ export const MessagesView: React.FC = () => {
                             </a>
                           )}
 
-                          {msg.content && (<p className="leading-relaxed whitespace-pre-wrap break-words">{threadSearchOpen && threadQuery ? renderHighlighted(msg.content, threadQuery) : msg.content}</p>)}
+                          {msg.content && !msg.poll && (<p className="leading-relaxed whitespace-pre-wrap break-words">{threadSearchOpen && threadQuery ? renderHighlighted(msg.content, threadQuery) : msg.content}</p>)}
+
+                          {/* Sondage */}
+                          {msg.poll && (
+                            <div className="min-w-[220px] text-ios-label-primaryLight dark:text-ios-label-primaryDark">
+                              <PollWidget compact poll={msg.poll} onVote={(optionId) => profile && castMessagePollVote(msg.poll!.id, optionId, profile.id)} />
+                            </div>
+                          )}
 
                           <p className={`text-[10px] mt-0.5 flex items-center gap-1 justify-end ${isMe ? 'text-white/60' : 'text-ios-label-secondaryLight dark:text-ios-label-secondaryDark'}`}>
                             {msg.edited_at && <span className="italic">modifié</span>}
@@ -640,6 +779,47 @@ export const MessagesView: React.FC = () => {
               </div>
             )}
 
+            {/* Formulaire de sondage */}
+            {pollOpen && !isBlocked && (
+              <div className="px-3 md:px-4 py-3 border-t border-black/5 dark:border-white/5 bg-black/3 dark:bg-white/3 space-y-2 animate-slide-up">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-extrabold flex items-center gap-1.5 text-ios-indigo-light dark:text-ios-indigo-dark"><BarChart3 className="w-4 h-4" /> Nouveau sondage</p>
+                  <button onClick={() => { setPollOpen(false); setPollQuestion(''); setPollOptions(['', '']); }} className="p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/5"><X className="w-4 h-4" /></button>
+                </div>
+                <input
+                  value={pollQuestion}
+                  onChange={e => setPollQuestion(e.target.value)}
+                  placeholder="Votre question..."
+                  className="w-full bg-black/5 dark:bg-white/5 rounded-ios-lg px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-ios-indigo-light"
+                />
+                {pollOptions.map((opt, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      value={opt}
+                      onChange={e => { const next = [...pollOptions]; next[idx] = e.target.value; setPollOptions(next); }}
+                      placeholder={`Option ${idx + 1}`}
+                      className="flex-1 bg-black/5 dark:bg-white/5 rounded-ios-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ios-indigo-light"
+                    />
+                    {pollOptions.length > 2 && (
+                      <button onClick={() => setPollOptions(pollOptions.filter((_, i) => i !== idx))} className="p-1.5 text-ios-red-light dark:text-ios-red-dark hover:bg-ios-red-light/10 rounded-full"><X className="w-3.5 h-3.5" /></button>
+                    )}
+                  </div>
+                ))}
+                <div className="flex items-center justify-between">
+                  {pollOptions.length < 6 ? (
+                    <button onClick={() => setPollOptions([...pollOptions, ''])} className="text-[11px] font-bold text-ios-indigo-light dark:text-ios-indigo-dark hover:underline flex items-center gap-1"><Plus className="w-3 h-3" /> Ajouter une option</button>
+                  ) : <span />}
+                  <button
+                    onClick={handleSendPoll}
+                    disabled={!pollQuestion.trim() || pollOptions.map(o => o.trim()).filter(Boolean).length < 2 || sendingPoll}
+                    className="px-4 py-2 rounded-ios-lg bg-ios-indigo-light dark:bg-ios-indigo-dark text-white text-sm font-bold flex items-center gap-2 disabled:opacity-40 hover:opacity-95 transition"
+                  >
+                    {sendingPoll ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Send className="w-4 h-4" /> Envoyer le sondage</>}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Composer (or blocked banner) */}
             {isBlocked ? (
               <div className="p-3 border-t border-black/5 dark:border-white/5 flex items-center justify-center gap-3 text-sm">
@@ -664,6 +844,11 @@ export const MessagesView: React.FC = () => {
                   {!editingId && (
                     <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="p-2.5 rounded-full text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-40 shrink-0" title="Joindre un fichier">
                       {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Paperclip className="w-5 h-5" />}
+                    </button>
+                  )}
+                  {!editingId && (
+                    <button onClick={() => setPollOpen(o => !o)} className={`p-2.5 rounded-full shrink-0 transition ${pollOpen ? 'bg-ios-indigo-light dark:bg-ios-indigo-dark text-white' : 'text-ios-label-secondaryLight dark:text-ios-label-secondaryDark hover:bg-black/5 dark:hover:bg-white/5'}`} title="Créer un sondage">
+                      <BarChart3 className="w-5 h-5" />
                     </button>
                   )}
                   <input ref={inputRef} type="text" value={input} onChange={handleInputChange} onKeyDown={handleKeyDown} placeholder={editingId ? 'Modifier le message...' : 'Écrire un message...'} className="flex-1 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/5 rounded-full px-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-ios-blue-light" />

@@ -351,18 +351,6 @@ export const Admin: React.FC = () => {
           .select('id, amount, status, created_at')
           .eq('user_id', selectedCrmUser.id);
 
-        // 5. Fetch donations data
-        const { data: donationsData } = await supabase
-          .from('donations')
-          .select('id, amount, message, created_at, livestreams:stream_id (title)')
-          .eq('donor_id', selectedCrmUser.id);
-
-        // 6. Fetch WebRTC video/audio calls involving the user
-        const { data: callsData } = await supabase
-          .from('calls')
-          .select('id, status, created_at, caller:caller_id (username), receiver:receiver_id (username)')
-          .or(`caller_id.eq.${selectedCrmUser.id},receiver_id.eq.${selectedCrmUser.id}`);
-
         const logsList: any[] = [];
 
         if (progressData) {
@@ -464,38 +452,6 @@ export const Admin: React.FC = () => {
               description: `A répondu "${item.content.length > 60 ? item.content.slice(0, 60) + '...' : item.content}" sur le post "${postTitle}".`,
               date: item.created_at,
               badgeColor: 'bg-ios-pink-light/10 text-ios-pink-light dark:bg-ios-pink-dark/20 dark:text-ios-pink-dark border-ios-pink-light/15'
-            });
-          });
-        }
-
-        if (donationsData) {
-          donationsData.forEach((item: any) => {
-            const streamTitle = Array.isArray(item.livestreams) 
-              ? item.livestreams[0]?.title 
-              : item.livestreams?.title || 'Livestream';
-            logsList.push({
-              id: `donation-${item.id}`,
-              type: 'donation',
-              title: `Donation Livestream 🎁`,
-              description: `A fait un don de ${item.amount} € sur le live "${streamTitle}" avec le message : "${item.message || 'Sans message'}".`,
-              date: item.created_at,
-              badgeColor: 'bg-yellow-500/10 text-yellow-600 dark:bg-yellow-500/20 dark:text-yellow-400 border-yellow-500/15'
-            });
-          });
-        }
-
-        if (callsData) {
-          callsData.forEach((item: any) => {
-            const isCaller = item.caller?.username === selectedCrmUser.username;
-            const peer = isCaller ? item.receiver?.username : item.caller?.username;
-            const actionText = isCaller ? `Appel émis vers @${peer}` : `Appel reçu de @${peer}`;
-            logsList.push({
-              id: `call-${item.id}`,
-              type: 'call',
-              title: `Session d'Appel Vidéo`,
-              description: `${actionText} (Statut: ${item.status}).`,
-              date: item.created_at,
-              badgeColor: 'bg-purple-500/10 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400 border-purple-500/15'
             });
           });
         }
@@ -1849,15 +1805,8 @@ export const Admin: React.FC = () => {
                             <span className="text-xs font-semibold">{selectedCrmUser.phone || 'Non renseigné'}</span>
                           </div>
                         </div>
-                          <Link 
-                            to="/live"
-                            state={{ dialUser: selectedCrmUser }}
-                            className="px-2.5 py-1.5 bg-ios-blue-light/10 text-ios-blue-light hover:bg-ios-blue-light/20 text-[10px] font-bold rounded-ios-md transition cursor-pointer"
-                          >
-                            Appeler
-                          </Link>
                       </div>
-                      
+
                       {/* Messagerie */}
                       <div className="p-3 bg-black/5 dark:bg-white/5 rounded-ios-xl border border-black/5 dark:border-white/5 flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -1868,11 +1817,12 @@ export const Admin: React.FC = () => {
                           </div>
                         </div>
                         <Link
-                          to="/live"
+                          to="/messages"
+                          state={{ startWith: selectedCrmUser }}
                           onClick={() => setSelectedCrmUser(null)}
                           className="px-2.5 py-1.5 bg-ios-indigo-light/10 text-ios-indigo-light hover:bg-ios-indigo-light/20 text-[10px] font-bold rounded-ios-md transition"
                         >
-                          Vidéo/Appel
+                          Message
                         </Link>
                       </div>
                     </div>

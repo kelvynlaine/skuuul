@@ -6,7 +6,6 @@ import { BadgeShowcase } from '../../components/BadgeShowcase';
 import {
   User,
   MessageCircle,
-  Video,
   Calendar,
   BookOpen,
   FileText,
@@ -98,10 +97,6 @@ export const ProfilePage: React.FC = () => {
     });
 
     setLoading(false);
-  };
-
-  const handleCall = () => {
-    navigate('/live', { state: { callUser: profileData } });
   };
 
   const handleMessage = () => {
@@ -199,14 +194,6 @@ export const ProfilePage: React.FC = () => {
             >
               <MessageCircle className="w-4 h-4" /> Message
             </button>
-            {profileData.phone && (
-              <button
-                onClick={handleCall}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-ios-lg bg-ios-green-light/10 dark:bg-ios-green-dark/15 text-ios-green-light dark:text-ios-green-dark font-semibold text-sm hover:opacity-80 transition"
-              >
-                <Video className="w-4 h-4" /> Appeler
-              </button>
-            )}
           </div>
         )}
       </div>

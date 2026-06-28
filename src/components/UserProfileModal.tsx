@@ -1,14 +1,14 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Profile } from '../store/authStore';
-import { 
-  X, Phone, Video, MessageSquare, Crown, Star,
-  Zap, Calendar, BadgeCheck, UserCircle2 
+import {
+  X, Phone, MessageCircle, Crown, Star,
+  Zap, Calendar, BadgeCheck, UserCircle2
 } from 'lucide-react';
 
 interface UserProfileModalProps {
   user: Profile;
   onClose: () => void;
-  onCallWebRTC?: (user: Profile) => void;
   currentUserId?: string;
 }
 
@@ -33,7 +33,6 @@ const RoleBadge: React.FC<{ role: string }> = ({ role }) => {
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   user,
   onClose,
-  onCallWebRTC,
   currentUserId,
 }) => {
   const isSelf = user.id === currentUserId;
@@ -153,30 +152,21 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           {/* Action Buttons */}
           {!isSelf && (
             <div className="flex gap-2">
-              {onCallWebRTC && (
-                <>
-                  <button
-                    onClick={() => { onCallWebRTC(user); onClose(); }}
-                    className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold py-3 rounded-xl text-sm hover:opacity-95 transition shadow-lg"
-                  >
-                    <Video className="w-4 h-4" /> Appel Vidéo
-                  </button>
-                  <button
-                    onClick={() => { onCallWebRTC(user); onClose(); }}
-                    className="flex-1 flex items-center justify-center gap-2 bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 font-bold py-3 rounded-xl text-sm hover:bg-emerald-500/25 transition"
-                  >
-                    <Phone className="w-4 h-4" /> Appeler
-                  </button>
-                </>
-              )}
-              {!onCallWebRTC && (
-                <button
-                  className="flex-1 flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white/50 font-bold py-3 rounded-xl text-sm cursor-not-allowed"
-                  disabled
-                >
-                  <MessageSquare className="w-4 h-4" /> Aucun contact disponible
-                </button>
-              )}
+              <Link
+                to="/messages"
+                state={{ startWith: user }}
+                onClick={onClose}
+                className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-bold py-3 rounded-xl text-sm hover:opacity-95 transition shadow-lg"
+              >
+                <MessageCircle className="w-4 h-4" /> Envoyer un message
+              </Link>
+              <Link
+                to={`/profile/${user.username}`}
+                onClick={onClose}
+                className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white/70 font-bold py-3 px-4 rounded-xl text-sm hover:bg-white/10 transition"
+              >
+                Profil
+              </Link>
             </div>
           )}
 

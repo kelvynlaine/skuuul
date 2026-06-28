@@ -1,10 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useAuthStore, Profile } from '../../store/authStore';
-import { supabase } from '../../services/supabase';
+import { useAuthStore } from '../../store/authStore';
 import { useNotificationStore } from '../../store/notificationStore';
 import { useMessageStore } from '../../store/messageStore';
-import { useLiveStore } from '../../store/liveStore';
 import { NotificationBell } from './NotificationBell';
 import { GlobalSearch } from './GlobalSearch';
 import { DesktopNav } from './DesktopNav';
@@ -20,13 +18,11 @@ import {
   Sun,
   Moon,
   User as UserIcon,
-  Video,
   UserCheck,
   Calendar,
   Phone,
   Edit3,
   Check,
-  Radio,
   MessageCircle,
 } from 'lucide-react';
 
@@ -44,7 +40,6 @@ export const Layout: React.FC = () => {
   const initPresence = useMessageStore(s => s.initPresence);
   const teardownPresence = useMessageStore(s => s.teardownPresence);
   const messageUnread = useMessageStore(s => s.conversations.reduce((sum, c) => sum + (c.unread_count ?? 0), 0));
-  const acceptIncomingCall = useLiveStore(s => s.acceptIncomingCall);
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -56,12 +51,7 @@ export const Layout: React.FC = () => {
   const [editIban, setEditIban] = useState(profile?.iban || '');
   const [savingProfile, setSavingProfile] = useState(false);
 
-  // Global Call States
-  const [incomingCall, setIncomingCall] = useState<Profile | null>(null);
-  const activeCallRef = useRef<any>(null);
-  const ringIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Subscribe to realtime notifications
+  // Subscribe to realtime notifications + presence/unread
   useEffect(() => {
     if (profile?.id) {
       subscribeNotifs(profile.id);
@@ -74,122 +64,6 @@ export const Layout: React.FC = () => {
       teardownPresence();
     };
   }, [profile?.id]);
-
-  // ─── GLOBAL INCOMING CALL SYSTEM ──────────────────────────────────────────
-  const playRingSound = () => {
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const o1 = ctx.createOscillator(); const o2 = ctx.createOscillator(); const g = ctx.createGain();
-      o1.type = 'sine'; o1.frequency.value = 440; o2.type = 'sine'; o2.frequency.value = 480;
-      g.gain.setValueAtTime(0, ctx.currentTime);
-      g.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.1);
-      g.gain.setValueAtTime(0.2, ctx.currentTime + 1.2);
-      g.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.5);
-      o1.connect(g); o2.connect(g); g.connect(ctx.destination);
-      o1.start(); o2.start();
-      setTimeout(() => { o1.stop(); o2.stop(); ctx.close(); }, 1600);
-    } catch (_) { /* blocked */ }
-  };
-
-  useEffect(() => {
-    if (incomingCall) {
-      ringIntervalRef.current = setInterval(playRingSound, 3000);
-    } else {
-      if (ringIntervalRef.current) clearInterval(ringIntervalRef.current);
-    }
-    return () => { if (ringIntervalRef.current) clearInterval(ringIntervalRef.current); };
-  }, [incomingCall]);
-
-  useEffect(() => {
-    const myId = profile?.id;
-    if (!myId) return;
-    let cancelled = false;
-    // Ids des appels déjà traités (présentés, refusés ou terminés) pour éviter les doublons
-    const handled = new Set<string>();
-
-    // Présente un appel entrant (dédupliqué entre realtime et polling)
-    const presentIncomingCall = async (call: any) => {
-      if (cancelled) return;
-      if (!call || call.status !== 'dialing') return;
-      if (call.receiver_id !== myId) return;
-      if (handled.has(call.id) || activeCallRef.current?.id === call.id) return;
-      handled.add(call.id);
-      // maybeSingle : ne jette pas si le profil est introuvable (évite un blocage silencieux)
-      const { data: cp } = await supabase.from('profiles').select('*').eq('id', call.caller_id).maybeSingle();
-      if (cancelled || !cp) { handled.delete(call.id); return; }
-      setIncomingCall(cp as Profile);
-      activeCallRef.current = call;
-      playRingSound();
-    };
-
-    const dismissCall = (callId: string) => {
-      handled.add(callId);
-      if (activeCallRef.current?.id === callId) {
-        setIncomingCall(null);
-        activeCallRef.current = null;
-      }
-    };
-
-    // ── 1. Realtime (voie principale) ──
-    const channel = supabase
-      .channel(`global-calls-recv-${myId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${myId}` },
-        (payload) => { presentIncomingCall(payload.new); })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'calls', filter: `receiver_id=eq.${myId}` },
-        (payload) => {
-          const call = payload.new as any;
-          if (call.status === 'dialing') presentIncomingCall(call);
-          else if (call.status === 'rejected' || call.status === 'ended') dismissCall(call.id);
-        })
-      .subscribe((status) => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.warn('[calls] abonnement realtime indisponible, fallback polling actif:', status);
-        }
-      });
-
-    // ── 2. Polling de secours : capte les appels même si le realtime rate l'event ──
-    const poll = async () => {
-      if (cancelled) return;
-      const since = new Date(Date.now() - 60_000).toISOString();
-      const { data } = await supabase
-        .from('calls')
-        .select('*')
-        .eq('receiver_id', myId)
-        .eq('status', 'dialing')
-        .gte('created_at', since)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      if (data && data.length > 0) presentIncomingCall(data[0]);
-    };
-    poll();
-    const pollInterval = setInterval(poll, 2500);
-
-    return () => {
-      cancelled = true;
-      clearInterval(pollInterval);
-      supabase.removeChannel(channel);
-    };
-  }, [profile?.id]);
-
-  const handleDeclineCall = async () => {
-    if (activeCallRef.current) {
-      await supabase.from('calls').update({ status: 'rejected' }).eq('id', activeCallRef.current.id);
-    }
-    setIncomingCall(null);
-    activeCallRef.current = null;
-  };
-
-  const handleAcceptCall = () => {
-    if (!activeCallRef.current || !incomingCall) return;
-    const callRow = activeCallRef.current;
-    const caller = incomingCall;
-    setIncomingCall(null);
-    activeCallRef.current = null;
-    // Canal robuste : on dépose l'appel accepté dans le store (survit même si on
-    // est déjà sur /live ou si le location.state est perdu), + nav-state en doublon.
-    acceptIncomingCall({ call: callRow, caller });
-    navigate('/live', { state: { acceptCall: true, activeCall: callRow, callerProfile: caller } });
-  };
 
   const toggleDarkMode = () => {
     const root = document.documentElement;
@@ -205,7 +79,6 @@ export const Layout: React.FC = () => {
     { path: '/', label: 'Communauté', icon: Users },
     { path: '/classroom', label: 'Classroom', icon: GraduationCap },
     { path: '/leaderboard', label: 'Leaderboard', icon: Trophy },
-    { path: '/live', label: 'Salon Live', icon: Video },
     { path: '/collaborative', label: 'Co-working', icon: Edit3 },
     { path: '/calendrier', label: 'Calendrier', icon: Calendar },
     { path: '/admins', label: 'Annuaire', icon: UserCheck },
@@ -721,34 +594,6 @@ export const Layout: React.FC = () => {
       <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 animate-fade-in">
         <Outlet />
       </main>
-
-      {/* Global Incoming Call Widget */}
-      {incomingCall && (
-        <div className="fixed bottom-6 right-6 z-50 w-72 rounded-3xl border border-white/10 shadow-2xl overflow-hidden animate-scale-in" style={{ background: 'linear-gradient(145deg, rgba(30,30,40,0.98), rgba(20,20,30,0.99))' }}>
-          <div className="p-5 flex flex-col items-center text-center gap-4">
-            <div className="relative">
-              <div className="absolute inset-[-8px] bg-blue-500/25 rounded-full animate-ping" />
-              {incomingCall.avatar_url ? (
-                <img src={incomingCall.avatar_url} alt={incomingCall.username} className="w-16 h-16 rounded-2xl object-cover border-2 border-blue-400 relative z-10" />
-              ) : (
-                <div className="w-16 h-16 rounded-2xl bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-2xl relative z-10 border-2 border-blue-400">
-                  {incomingCall.username[0].toUpperCase()}
-                </div>
-              )}
-            </div>
-            <div>
-              <p className="text-white font-extrabold text-sm">{incomingCall.full_name || incomingCall.username}</p>
-              <p className="text-blue-400 text-xs font-semibold flex items-center justify-center gap-1 mt-0.5 animate-pulse">
-                <Radio className="w-3.5 h-3.5 text-blue-500" /> Appel vidéo entrant...
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 w-full">
-              <button onClick={handleDeclineCall} className="py-2 rounded-xl bg-red-500/15 border border-red-500/25 text-red-400 font-bold text-xs hover:bg-red-500/25 transition">Refuser</button>
-              <button onClick={handleAcceptCall} className="py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 font-bold text-xs hover:bg-emerald-500/25 transition animate-pulse">Accepter</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

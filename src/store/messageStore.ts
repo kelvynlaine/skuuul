@@ -2,18 +2,26 @@ import { create } from 'zustand';
 import { supabase } from '../services/supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
+export interface MiniProfile {
+  id: string;
+  username: string;
+  full_name: string | null;
+  avatar_url: string | null;
+}
+
 export interface Conversation {
   id: string;
-  participant_a: string;
-  participant_b: string;
+  participant_a: string | null;
+  participant_b: string | null;
   last_message_at: string;
   created_at: string;
-  other_profile?: {
-    id: string;
-    username: string;
-    full_name: string | null;
-    avatar_url: string | null;
-  };
+  other_profile?: MiniProfile;
+  // Groupes
+  is_group?: boolean;
+  name?: string | null;
+  avatar_url?: string | null;
+  created_by?: string | null;
+  members?: MiniProfile[];
   unread_count?: number;
   last_message?: string;
   last_message_sender?: string | null;
@@ -35,6 +43,19 @@ export interface MessageReaction {
 
 export type AttachmentType = 'image' | 'file' | 'audio';
 
+export interface MessagePollOption {
+  id: string;
+  option_text: string;
+  votes_count: number;
+}
+
+export interface MessagePoll {
+  id: string;
+  question: string;
+  options: MessagePollOption[];
+  user_voted_option_id?: string | null;
+}
+
 export interface DirectMessage {
   id: string;
   conversation_id: string;
@@ -51,6 +72,8 @@ export interface DirectMessage {
   attachment_type?: AttachmentType | null;
   attachment_name?: string | null;
   attachment_duration?: number | null;
+  has_poll?: boolean;
+  poll?: MessagePoll | null;
   pending?: boolean;
 }
 
@@ -87,6 +110,9 @@ interface MessageState {
   blockUser: (blockerId: string, blockedId: string) => Promise<void>;
   unblockUser: (blockerId: string, blockedId: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
+  createGroup: (name: string, memberIds: string[], creatorId: string) => Promise<string | null>;
+  sendPoll: (conversationId: string, senderId: string, question: string, options: string[]) => Promise<void>;
+  castMessagePollVote: (pollId: string, optionId: string, userId: string) => Promise<void>;
   getOrCreateConversation: (myId: string, otherId: string) => Promise<string>;
   markConversationRead: (conversationId: string, userId: string) => Promise<void>;
   searchMembers: (query: string, excludeId: string) => Promise<MemberResult[]>;
@@ -114,15 +140,26 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
   fetchConversations: async (userId: string) => {
     set({ loading: true });
-    const { data, error } = await supabase
-      .from('conversations')
-      .select('*')
-      .or(`participant_a.eq.${userId},participant_b.eq.${userId}`)
-      .order('last_message_at', { ascending: false });
 
-    if (error || !data) { set({ loading: false }); return; }
+    // 1:1 (via participant_a/b) + groupes (via conversation_members)
+    const [{ data: dmData }, { data: memberRows }] = await Promise.all([
+      supabase.from('conversations').select('*').or(`participant_a.eq.${userId},participant_b.eq.${userId}`),
+      supabase.from('conversation_members').select('conversation_id').eq('user_id', userId),
+    ]);
 
-    // Per-user settings (mute/archive) + my block list, fetched once
+    const groupIds = (memberRows ?? []).map((r: any) => r.conversation_id);
+    let groupData: any[] = [];
+    if (groupIds.length > 0) {
+      const { data: gd } = await supabase.from('conversations').select('*').in('id', groupIds);
+      groupData = gd ?? [];
+    }
+
+    // fusion + dédup par id
+    const data = Array.from(
+      new Map([...(dmData ?? []), ...groupData].map((c: any) => [c.id, c])).values()
+    );
+    if (data.length === 0) { set({ conversations: [], loading: false }); return; }
+
     const [{ data: settingsRows }, { data: blockedRows }] = await Promise.all([
       supabase.from('conversation_settings').select('conversation_id, muted, archived').eq('user_id', userId),
       supabase.from('blocked_users').select('blocked_id').eq('blocker_id', userId),
@@ -131,16 +168,21 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     const blockedSet = new Set((blockedRows ?? []).map((b: any) => b.blocked_id));
 
     const enriched: Conversation[] = await Promise.all(
-      data.map(async (conv) => {
-        const otherId = conv.participant_a === userId ? conv.participant_b : conv.participant_a;
+      data.map(async (conv: any) => {
+        const isGroup = !!conv.is_group;
+        const otherId = isGroup ? null : (conv.participant_a === userId ? conv.participant_b : conv.participant_a);
 
-        const [{ data: prof }, { data: lastMsg }, { count: unread }] = await Promise.all([
-          supabase.from('profiles')
-            .select('id, username, full_name, avatar_url')
-            .eq('id', otherId)
-            .maybeSingle(),
+        const [profOrMembers, { data: lastMsg }, { count: unread }] = await Promise.all([
+          isGroup
+            ? supabase.from('conversation_members')
+                .select('user_id, profiles:user_id(id, username, full_name, avatar_url)')
+                .eq('conversation_id', conv.id)
+            : supabase.from('profiles')
+                .select('id, username, full_name, avatar_url')
+                .eq('id', otherId)
+                .maybeSingle(),
           supabase.from('direct_messages')
-            .select('content, sender_id, attachment_type')
+            .select('content, sender_id, attachment_type, has_poll')
             .eq('conversation_id', conv.id)
             .order('created_at', { ascending: false })
             .limit(1)
@@ -152,23 +194,31 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             .neq('sender_id', userId),
         ]);
 
-        const attLabel = lastMsg?.attachment_type === 'image' ? '📷 Photo'
+        const attLabel = lastMsg?.has_poll ? '📊 Sondage'
+          : lastMsg?.attachment_type === 'image' ? '📷 Photo'
           : lastMsg?.attachment_type === 'audio' ? '🎤 Message vocal'
           : lastMsg?.attachment_type === 'file' ? '📎 Fichier' : '';
         const settings = settingsMap.get(conv.id);
+
+        const members = isGroup
+          ? ((profOrMembers as any).data ?? []).map((r: any) => r.profiles).filter(Boolean)
+          : undefined;
+
         return {
           ...conv,
-          other_profile: prof ?? undefined,
+          other_profile: isGroup ? undefined : ((profOrMembers as any).data ?? undefined),
+          members,
           last_message: lastMsg?.content || attLabel,
           last_message_sender: lastMsg?.sender_id ?? null,
           unread_count: unread ?? 0,
           muted: settings?.muted ?? false,
           archived: settings?.archived ?? false,
-          blocked: blockedSet.has(otherId),
+          blocked: !isGroup && otherId ? blockedSet.has(otherId) : false,
         };
       })
     );
 
+    enriched.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
     set({ conversations: enriched, loading: false });
   },
 
@@ -198,9 +248,39 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         });
       }
 
+      // Sondages : charger les polls + le vote de l'utilisateur courant
+      const pollMsgIds = list.filter(m => (m as any).has_poll).map(m => m.id);
+      const pollByMsg = new Map<string, MessagePoll>();
+      if (pollMsgIds.length > 0) {
+        const { data: { user } } = await supabase.auth.getUser();
+        const { data: polls } = await supabase
+          .from('message_polls')
+          .select('id, message_id, question, options:message_poll_options(id, option_text, votes_count)')
+          .in('message_id', pollMsgIds);
+        const pollIds = (polls ?? []).map((p: any) => p.id);
+        const voteByPoll = new Map<string, string>();
+        if (user && pollIds.length > 0) {
+          const { data: votes } = await supabase
+            .from('message_poll_votes')
+            .select('poll_id, option_id')
+            .eq('user_id', user.id)
+            .in('poll_id', pollIds);
+          (votes ?? []).forEach((v: any) => voteByPoll.set(v.poll_id, v.option_id));
+        }
+        (polls ?? []).forEach((p: any) => {
+          pollByMsg.set(p.message_id, {
+            id: p.id,
+            question: p.question,
+            options: (p.options ?? []).map((o: any) => ({ id: o.id, option_text: o.option_text, votes_count: o.votes_count })),
+            user_voted_option_id: voteByPoll.get(p.id) ?? null,
+          });
+        });
+      }
+
       const enriched = list.map(m => ({
         ...m,
         reactions: reactionsByMsg.get(m.id) ?? [],
+        poll: pollByMsg.get(m.id) ?? null,
         reply_preview: m.reply_to_id
           ? (() => { const t = byId.get(m.reply_to_id!); return t ? { id: t.id, content: t.content, sender_id: t.sender_id } : null; })()
           : null,
@@ -357,6 +437,63 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     await supabase.from('direct_messages').delete().eq('id', messageId);
   },
 
+  createGroup: async (name, memberIds, creatorId) => {
+    const { data: conv, error } = await supabase
+      .from('conversations')
+      .insert({ is_group: true, name: name.trim(), created_by: creatorId, last_message_at: new Date(Date.now()).toISOString() })
+      .select('id')
+      .maybeSingle();
+    if (error || !conv) {
+      console.error('createGroup failed', error);
+      alert("Impossible de créer le groupe : " + (error?.message || 'erreur inconnue'));
+      return null;
+    }
+    const uniqueIds = Array.from(new Set([creatorId, ...memberIds]));
+    const rows = uniqueIds.map(uid => ({
+      conversation_id: conv.id,
+      user_id: uid,
+      role: uid === creatorId ? 'admin' : 'member',
+    }));
+    const { error: mErr } = await supabase.from('conversation_members').insert(rows);
+    if (mErr) console.error('createGroup members failed', mErr);
+    await get().fetchConversations(creatorId);
+    return conv.id;
+  },
+
+  sendPoll: async (conversationId, senderId, question, options) => {
+    const cleanOptions = options.map(o => o.trim()).filter(Boolean);
+    if (!question.trim() || cleanOptions.length < 2) return;
+    const { data: msg, error } = await supabase.from('direct_messages').insert({
+      conversation_id: conversationId, sender_id: senderId, content: question.trim(), has_poll: true,
+    }).select().single();
+    if (error || !msg) { console.error('sendPoll msg failed', error); alert('Envoi du sondage impossible.'); return; }
+
+    const { data: poll, error: pErr } = await supabase.from('message_polls')
+      .insert({ message_id: msg.id, question: question.trim() }).select('id').single();
+    if (pErr || !poll) { console.error('sendPoll poll failed', pErr); return; }
+    await supabase.from('message_poll_options').insert(cleanOptions.map(o => ({ poll_id: poll.id, option_text: o })));
+
+    await get().fetchMessages(conversationId);
+    set(state => ({
+      conversations: state.conversations.map(c =>
+        c.id === conversationId
+          ? { ...c, last_message: '📊 ' + question.trim(), last_message_sender: senderId, last_message_at: (msg as any).created_at }
+          : c
+      ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()),
+    }));
+  },
+
+  castMessagePollVote: async (pollId, optionId, userId) => {
+    const { error } = await supabase.from('message_poll_votes').insert({ poll_id: pollId, option_id: optionId, user_id: userId });
+    if (error) {
+      if (error.code === '23505') alert('Vous avez déjà voté à ce sondage.');
+      else console.error('castMessagePollVote failed', error);
+      return;
+    }
+    const convId = get().activeConversationId;
+    if (convId) await get().fetchMessages(convId);
+  },
+
   forwardMessage: async (message, targetConversationId, senderId) => {
     const { data } = await supabase.from('direct_messages').insert({
       conversation_id: targetConversationId,
@@ -493,6 +630,10 @@ export const useMessageStore = create<MessageState>((set, get) => ({
           // auto-mark incoming as read since the thread is open
           if (msg.sender_id !== myId) {
             supabase.from('direct_messages').update({ is_read: true }).eq('id', msg.id);
+          }
+          // message contenant un sondage → recharger pour hydrater le poll + options
+          if ((msg as any).has_poll && msg.sender_id !== myId) {
+            get().fetchMessages(conversationId);
           }
         }
       )
