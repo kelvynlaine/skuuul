@@ -12,7 +12,18 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
-const STUN_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+// STUN (découverte d'IP publique) + TURN (relais quand la connexion P2P directe
+// échoue : NAT symétrique, 4G ↔ box, pare-feu strict). Les TURN publics OpenRelay
+// servent de fallback gratuit — pour de la prod intensive, prévoir un TURN dédié.
+const STUN_SERVERS = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  ],
+};
 
 const DEFAULT_NOTES = '📝 Notes de réunion...\n\n• Point 1 :\n• Point 2 :\n• Action items :';
 
