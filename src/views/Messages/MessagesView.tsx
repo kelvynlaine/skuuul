@@ -139,9 +139,11 @@ export const MessagesView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
+  // Scroll uniquement à l'arrivée d'un nouveau message (ou son remplacement),
+  // pas à chaque événement de frappe — sinon la liste « saute » / scintille.
   useEffect(() => {
     if (!threadSearchOpen) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, typingUsers, threadSearchOpen]);
+  }, [messages.length, messages[messages.length - 1]?.id, threadSearchOpen]);
 
   useEffect(() => {
     if (!newChatOpen || !profile) return;

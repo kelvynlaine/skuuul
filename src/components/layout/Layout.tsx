@@ -4,6 +4,7 @@ import { useAuthStore, Profile } from '../../store/authStore';
 import { supabase } from '../../services/supabase';
 import { useNotificationStore } from '../../store/notificationStore';
 import { useMessageStore } from '../../store/messageStore';
+import { useLiveStore } from '../../store/liveStore';
 import { NotificationBell } from './NotificationBell';
 import { GlobalSearch } from './GlobalSearch';
 import { DesktopNav } from './DesktopNav';
@@ -30,10 +31,20 @@ import {
 } from 'lucide-react';
 
 export const Layout: React.FC = () => {
-  const { profile, logout, updateProfile } = useAuthStore();
-  const { subscribe: subscribeNotifs, unsubscribe: unsubscribeNotifs } = useNotificationStore();
-  const { initGlobalUnread, teardownGlobalUnread, initPresence, teardownPresence } = useMessageStore();
+  // Sélecteurs granulaires : on ne s'abonne qu'à ce dont le Layout a besoin.
+  // (les actions Zustand sont des références stables → pas de re-rendu sur les
+  //  ticks de présence/frappe/notification, qui causaient le scintillement global)
+  const profile = useAuthStore(s => s.profile);
+  const logout = useAuthStore(s => s.logout);
+  const updateProfile = useAuthStore(s => s.updateProfile);
+  const subscribeNotifs = useNotificationStore(s => s.subscribe);
+  const unsubscribeNotifs = useNotificationStore(s => s.unsubscribe);
+  const initGlobalUnread = useMessageStore(s => s.initGlobalUnread);
+  const teardownGlobalUnread = useMessageStore(s => s.teardownGlobalUnread);
+  const initPresence = useMessageStore(s => s.initPresence);
+  const teardownPresence = useMessageStore(s => s.teardownPresence);
   const messageUnread = useMessageStore(s => s.conversations.reduce((sum, c) => sum + (c.unread_count ?? 0), 0));
+  const acceptIncomingCall = useLiveStore(s => s.acceptIncomingCall);
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -90,7 +101,8 @@ export const Layout: React.FC = () => {
   }, [incomingCall]);
 
   useEffect(() => {
-    if (!profile) return;
+    const myId = profile?.id;
+    if (!myId) return;
     let cancelled = false;
     // Ids des appels déjà traités (présentés, refusés ou terminés) pour éviter les doublons
     const handled = new Set<string>();
@@ -99,14 +111,12 @@ export const Layout: React.FC = () => {
     const presentIncomingCall = async (call: any) => {
       if (cancelled) return;
       if (!call || call.status !== 'dialing') return;
-      if (call.receiver_id !== profile.id) return;
+      if (call.receiver_id !== myId) return;
       if (handled.has(call.id) || activeCallRef.current?.id === call.id) return;
       handled.add(call.id);
-      const { data: cp } = await supabase.from('profiles').select('*').eq('id', call.caller_id).single();
-      if (cancelled || !cp) return;
-      // Si entre-temps l'appel a été annulé en base, ne rien afficher
-      const { data: fresh } = await supabase.from('calls').select('status').eq('id', call.id).single();
-      if (cancelled || !fresh || fresh.status !== 'dialing') return;
+      // maybeSingle : ne jette pas si le profil est introuvable (évite un blocage silencieux)
+      const { data: cp } = await supabase.from('profiles').select('*').eq('id', call.caller_id).maybeSingle();
+      if (cancelled || !cp) { handled.delete(call.id); return; }
       setIncomingCall(cp as Profile);
       activeCallRef.current = call;
       playRingSound();
@@ -122,10 +132,10 @@ export const Layout: React.FC = () => {
 
     // ── 1. Realtime (voie principale) ──
     const channel = supabase
-      .channel(`global-calls-recv-${profile.id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${profile.id}` },
+      .channel(`global-calls-recv-${myId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls', filter: `receiver_id=eq.${myId}` },
         (payload) => { presentIncomingCall(payload.new); })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'calls', filter: `receiver_id=eq.${profile.id}` },
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'calls', filter: `receiver_id=eq.${myId}` },
         (payload) => {
           const call = payload.new as any;
           if (call.status === 'dialing') presentIncomingCall(call);
@@ -140,11 +150,11 @@ export const Layout: React.FC = () => {
     // ── 2. Polling de secours : capte les appels même si le realtime rate l'event ──
     const poll = async () => {
       if (cancelled) return;
-      const since = new Date(Date.now() - 40_000).toISOString();
+      const since = new Date(Date.now() - 60_000).toISOString();
       const { data } = await supabase
         .from('calls')
         .select('*')
-        .eq('receiver_id', profile.id)
+        .eq('receiver_id', myId)
         .eq('status', 'dialing')
         .gte('created_at', since)
         .order('created_at', { ascending: false })
@@ -152,14 +162,14 @@ export const Layout: React.FC = () => {
       if (data && data.length > 0) presentIncomingCall(data[0]);
     };
     poll();
-    const pollInterval = setInterval(poll, 3500);
+    const pollInterval = setInterval(poll, 2500);
 
     return () => {
       cancelled = true;
       clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
-  }, [profile]);
+  }, [profile?.id]);
 
   const handleDeclineCall = async () => {
     if (activeCallRef.current) {
@@ -175,6 +185,9 @@ export const Layout: React.FC = () => {
     const caller = incomingCall;
     setIncomingCall(null);
     activeCallRef.current = null;
+    // Canal robuste : on dépose l'appel accepté dans le store (survit même si on
+    // est déjà sur /live ou si le location.state est perdu), + nav-state en doublon.
+    acceptIncomingCall({ call: callRow, caller });
     navigate('/live', { state: { acceptCall: true, activeCall: callRow, callerProfile: caller } });
   };
 

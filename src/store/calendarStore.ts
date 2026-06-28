@@ -292,7 +292,11 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => {
         get().fetchAppointments(userId);
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[calendar] realtime indisponible (la migration calendar_crm.sql est-elle exécutée ?) :', status);
+        }
+      });
     set({ channel });
   },
 

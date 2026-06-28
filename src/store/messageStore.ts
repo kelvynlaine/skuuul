@@ -138,7 +138,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
           supabase.from('profiles')
             .select('id, username, full_name, avatar_url')
             .eq('id', otherId)
-            .single(),
+            .maybeSingle(),
           supabase.from('direct_messages')
             .select('content, sender_id, attachment_type')
             .eq('conversation_id', conv.id)
@@ -426,13 +426,17 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
     if (existing) return existing.id;
 
-    const { data: created } = await supabase
+    const { data: created, error } = await supabase
       .from('conversations')
       .insert({ participant_a: myId, participant_b: otherId, last_message_at: new Date(Date.now()).toISOString() })
       .select('id')
-      .single();
+      .maybeSingle();
 
-    return created!.id;
+    if (error || !created) {
+      console.error('getOrCreateConversation: insert failed', error);
+      throw new Error(error?.message || 'Impossible de créer la conversation');
+    }
+    return created.id;
   },
 
   markConversationRead: async (conversationId: string, userId: string) => {

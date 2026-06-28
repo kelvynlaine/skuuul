@@ -39,9 +39,10 @@ export const LiveRooms: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { profile, profilesList, fetchProfilesList } = useAuthStore();
-  const { 
+  const {
     activeStreams, currentStream, donations, loading, totalEarnings,
-    fetchActiveStreams, createStream, endStream, submitDonation, subscribeToDonations 
+    fetchActiveStreams, createStream, endStream, submitDonation, subscribeToDonations,
+    incomingAcceptedCall, clearAcceptedCall,
   } = useLiveStore();
 
   const [activeSubTab, setActiveSubTab] = useState<'calls' | 'streams'>('calls');
@@ -83,6 +84,11 @@ export const LiveRooms: React.FC = () => {
   const callChatChannelRef = useRef<any>(null);
   const notesSyncRef = useRef<string>(DEFAULT_NOTES);
   const notesDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Trickle ICE pour les appels 1:1 (échange des candidats via broadcast Supabase)
+  const callIceChannelRef = useRef<any>(null);
+  const outgoingIceRef = useRef<RTCIceCandidateInit[]>([]);
+  const pendingIncomingIceRef = useRef<RTCIceCandidateInit[]>([]);
+  const acceptedHandledRef = useRef<string | null>(null);
 
   // ─── LIVESTREAM STATE ─────────────────────────────────────────────────────
   const [streamTitle, setStreamTitle] = useState('');
@@ -168,6 +174,19 @@ export const LiveRooms: React.FC = () => {
     return () => { if (ringIntervalRef.current) clearInterval(ringIntervalRef.current); };
   }, [isDialing]);
 
+  // Timeout d'appel : si personne ne répond au bout de 60 s, on raccroche
+  // (évite la sonnerie infinie et les lignes `dialing` fantômes).
+  useEffect(() => {
+    if (!isDialing || callJoined) return;
+    const t = setTimeout(async () => {
+      if (activeCallRef.current && !callJoined) {
+        await supabase.from('calls').update({ status: 'ended' }).eq('id', activeCallRef.current.id);
+        hangUpLocally();
+      }
+    }, 60000);
+    return () => clearTimeout(t);
+  }, [isDialing, callJoined]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Supabase call signaling
   useEffect(() => {
     if (!profile) return;
@@ -184,6 +203,7 @@ export const LiveRooms: React.FC = () => {
               if (answer && peerConnectionRef.current) {
                 try {
                   await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+                  flushPendingIce(peerConnectionRef.current);
                   setCallJoined(true);
                   setIsDialing(false);
                 } catch (e) { console.error(e); }
@@ -553,6 +573,10 @@ export const LiveRooms: React.FC = () => {
     peerConnectionRef.current?.close();
     peerConnectionRef.current = null;
     remoteStreamRef.current = null;
+    // Fermer le canal d'échange ICE de l'appel
+    if (callIceChannelRef.current) { supabase.removeChannel(callIceChannelRef.current); callIceChannelRef.current = null; }
+    outgoingIceRef.current = [];
+    pendingIncomingIceRef.current = [];
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     setCallJoined(false);
@@ -567,6 +591,7 @@ export const LiveRooms: React.FC = () => {
     notesSyncRef.current = DEFAULT_NOTES;
     setNotesContent(DEFAULT_NOTES);
     activeCallRef.current = null;
+    acceptedHandledRef.current = null;
   }, []);
 
   const attachRemoteStream = useCallback((stream: MediaStream) => {
@@ -582,6 +607,49 @@ export const LiveRooms: React.FC = () => {
     }
   }, []);
 
+  // ── Trickle ICE pour les appels 1:1 ──
+  // Envoie un candidat local, ou le bufferise si le canal n'est pas encore prêt
+  // (l'appelant ne connaît l'id de l'appel qu'après l'INSERT).
+  const sendOrBufferIce = useCallback((candidate: RTCIceCandidateInit) => {
+    const ch = callIceChannelRef.current;
+    if (ch) ch.send({ type: 'broadcast', event: 'ice', payload: { candidate, from: profile?.id } });
+    else outgoingIceRef.current.push(candidate);
+  }, [profile?.id]);
+
+  // Ajoute un candidat distant, ou le bufferise tant que la description distante
+  // n'est pas posée (sinon addIceCandidate échoue).
+  const addOrBufferIce = useCallback((pc: RTCPeerConnection, candidate: RTCIceCandidateInit) => {
+    if (pc.remoteDescription && pc.remoteDescription.type) {
+      pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
+    } else {
+      pendingIncomingIceRef.current.push(candidate);
+    }
+  }, []);
+
+  const flushPendingIce = useCallback((pc: RTCPeerConnection) => {
+    pendingIncomingIceRef.current.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)).catch(console.error));
+    pendingIncomingIceRef.current = [];
+  }, []);
+
+  // Ouvre le canal d'échange ICE dédié à un appel (dès que son id est connu).
+  const setupCallIceChannel = useCallback((callId: string, pc: RTCPeerConnection) => {
+    if (callIceChannelRef.current) return;
+    const ch = supabase
+      .channel(`call-ice-${callId}`)
+      .on('broadcast', { event: 'ice' }, ({ payload }: any) => {
+        if (!payload || payload.from === profile?.id || !payload.candidate) return;
+        addOrBufferIce(pc, payload.candidate);
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          // rejouer les candidats locaux gathered avant l'ouverture du canal
+          outgoingIceRef.current.forEach(c => ch.send({ type: 'broadcast', event: 'ice', payload: { candidate: c, from: profile?.id } }));
+          outgoingIceRef.current = [];
+        }
+      });
+    callIceChannelRef.current = ch;
+  }, [profile?.id, addOrBufferIce]);
+
   const makePC = (): RTCPeerConnection => {
     const pc = new RTCPeerConnection(STUN_SERVERS);
     // Collect every inbound track into a single MediaStream so audio + video
@@ -592,6 +660,8 @@ export const LiveRooms: React.FC = () => {
       if (!e.streams[0]) inbound.addTrack(e.track);
       attachRemoteStream(stream);
     };
+    // Trickle ICE : chaque candidat local est relayé à l'autre pair.
+    pc.onicecandidate = ({ candidate }) => { if (candidate) sendOrBufferIce(candidate.toJSON()); };
     return pc;
   };
 
@@ -715,10 +785,12 @@ export const LiveRooms: React.FC = () => {
           signal_data: { offer: pc.localDescription }
         }).select().single();
         if (error) { console.error(error); hangUpLocally(); }
-        else activeCallRef.current = data;
+        else { activeCallRef.current = data; setupCallIceChannel(data.id, pc); }
       };
+      // On envoie l'offre rapidement (300 ms) ; les candidats restants sont
+      // échangés en trickle via le canal ICE → connexion plus fiable.
       pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') send(); };
-      setTimeout(send, 2000);
+      setTimeout(send, 800);
     } catch (err: any) {
       hangUpLocally();
       alert(err.name === 'NotAllowedError' ? 'Permission caméra/micro refusée.' : `Erreur : ${err.message}`);
@@ -869,49 +941,64 @@ export const LiveRooms: React.FC = () => {
     };
   }, [currentStream, setupCreatorSignaling]);
 
-  // Auto-accept call when routed from global Layout notification
+  // Rejoint un appel accepté (flux destinataire) — réutilisé par la nav-state
+  // ET par l'état store, avec garde anti-double-exécution sur l'id de l'appel.
+  const joinAcceptedCall = useCallback(async (callRow: any, caller: Profile) => {
+    if (!callRow?.id || acceptedHandledRef.current === callRow.id) return;
+    acceptedHandledRef.current = callRow.id;
+    setActiveSubTab('calls');
+    setSelectedCallUser(caller);
+    activeCallRef.current = callRow;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      const pc = makePC();
+      peerConnectionRef.current = pc;
+      stream.getTracks().forEach(t => pc.addTrack(t, stream));
+      // Ouvrir le canal ICE AVANT setRemoteDescription pour bufferiser les candidats entrants
+      setupCallIceChannel(callRow.id, pc);
+      await pc.setRemoteDescription(new RTCSessionDescription(callRow.signal_data?.offer));
+      flushPendingIce(pc);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      let sent = false;
+      const send = async () => {
+        if (sent) return; sent = true;
+        const { error } = await supabase.from('calls').update({
+          status: 'active', signal_data: { offer: callRow.signal_data?.offer, answer: pc.localDescription }
+        }).eq('id', callRow.id);
+        if (error) { hangUpLocally(); } else setCallJoined(true);
+      };
+      pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') send(); };
+      setTimeout(send, 800);
+    } catch (err: any) {
+      acceptedHandledRef.current = null;
+      hangUpLocally();
+      alert(err.name === 'NotAllowedError' ? 'Permission caméra/micro refusée.' : `Erreur : ${err.message}`);
+    }
+  }, [makePC, setupCallIceChannel, flushPendingIce, hangUpLocally]);
+
+  // Canal principal d'acceptation : l'état store (robuste, survit aux refresh /
+  // fonctionne même si on est déjà sur /live).
+  useEffect(() => {
+    if (incomingAcceptedCall) {
+      const { call, caller } = incomingAcceptedCall;
+      clearAcceptedCall();
+      joinAcceptedCall(call, caller);
+    }
+  }, [incomingAcceptedCall, clearAcceptedCall, joinAcceptedCall]);
+
+  // Canal de secours : nav-state (rétro-compatibilité si le store est vide).
   useEffect(() => {
     const state = location.state as { acceptCall?: boolean; activeCall?: any; callerProfile?: Profile } | null;
     if (state?.acceptCall && state.activeCall && state.callerProfile) {
       const callRow = state.activeCall;
       const caller = state.callerProfile;
-      // Clear navigation state
       navigate(location.pathname, { replace: true, state: {} });
-      // Set subtab to calls
-      setActiveSubTab('calls');
-      
-      const join = async () => {
-        setSelectedCallUser(caller);
-        activeCallRef.current = callRow;
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-          localStreamRef.current = stream;
-          if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-          const pc = makePC();
-          peerConnectionRef.current = pc;
-          stream.getTracks().forEach(t => pc.addTrack(t, stream));
-          await pc.setRemoteDescription(new RTCSessionDescription(callRow.signal_data?.offer));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          let sent = false;
-          const send = async () => {
-            if (sent) return; sent = true;
-            const { error } = await supabase.from('calls').update({
-              status: 'active', signal_data: { offer: callRow.signal_data?.offer, answer: pc.localDescription }
-            }).eq('id', callRow.id);
-            if (error) { hangUpLocally(); } else setCallJoined(true);
-          };
-          pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') send(); };
-          setTimeout(send, 2000);
-        } catch (err: any) {
-          hangUpLocally();
-          alert(err.name === 'NotAllowedError' ? 'Permission caméra/micro refusée.' : `Erreur : ${err.message}`);
-        }
-      };
-      
-      join();
+      joinAcceptedCall(callRow, caller);
     }
-  }, [location.state, navigate]); // eslint-disable-line
+  }, [location.state, navigate, joinAcceptedCall]);
 
   // ─── RENDER ───────────────────────────────────────────────────────────────
   return (

@@ -26,12 +26,23 @@ export interface Donation {
   };
 }
 
+export interface AcceptedCall {
+  call: any;          // ligne `calls` (avec signal_data.offer)
+  caller: Profile;    // profil de l'appelant
+}
+
 interface LiveState {
   activeStreams: Livestream[];
   currentStream: Livestream | null;
   donations: Donation[];
   loading: boolean;
   totalEarnings: number;
+
+  // Appel accepté en attente d'être rejoint par LiveRooms
+  // (canal robuste, indépendant du location.state de React Router)
+  incomingAcceptedCall: AcceptedCall | null;
+  acceptIncomingCall: (call: AcceptedCall) => void;
+  clearAcceptedCall: () => void;
 
   // Actions
   fetchActiveStreams: () => Promise<void>;
@@ -48,6 +59,10 @@ export const useLiveStore = create<LiveState>((set, get) => ({
   donations: [],
   loading: false,
   totalEarnings: 0,
+  incomingAcceptedCall: null,
+
+  acceptIncomingCall: (call) => set({ incomingAcceptedCall: call }),
+  clearAcceptedCall: () => set({ incomingAcceptedCall: null }),
 
   fetchActiveStreams: async () => {
     set({ loading: true });
